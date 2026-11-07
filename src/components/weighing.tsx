@@ -1,0 +1,576 @@
+"use client";
+import { useEffect, useRef, useState } from "react";
+import Decimal from "decimal.js";
+import {
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  Scale,
+  RefreshCw,
+  PackageX,
+} from "lucide-react";
+import {
+  billedResolved,
+  isWeight,
+  lineAmount,
+  money,
+  pickedResolved,
+  subtotal,
+  type OrderItem,
+  type Unit,
+  type Workspace,
+} from "@/lib/domain";
+import { Empty, ErrorText, Field, Modal, Progress } from "./ui";
+import type { Mutate, ViewProps } from "./types";
+
+function ActualItem({
+  item,
+  product,
+  data,
+  mutate,
+  busy,
+  onNext,
+  error,
+}: {
+  item: OrderItem;
+  product: string;
+  data: Workspace;
+  mutate: Mutate;
+  busy: boolean;
+  onNext: () => void;
+  error?: string;
+}) {
+  const [actual, setActual] = useState(
+    item.actual_quantity
+      ? new Decimal(item.actual_quantity).toString()
+      : isWeight(item.billing_unit)
+        ? ""
+        : new Decimal(item.ordered_quantity).toString(),
+  );
+  const [unit, setUnit] = useState<Unit>(
+    item.actual_unit ??
+      (isWeight(item.billing_unit) ? "kg" : item.billing_unit),
+  );
+  const [dirty, setDirty] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [failedSave, setFailedSave] = useState(false);
+  const [refreshPrice, setRefreshPrice] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const localKey = `fresh-helper-actual:${item.id}`;
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(localKey);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (
+          draft.version === item.version &&
+          typeof draft.actual === "string" &&
+          typeof draft.unit === "string"
+        ) {
+          setActual(draft.actual);
+          setUnit(draft.unit);
+          setDirty(true);
+        }
+      }
+    } catch {
+      /* Keep the saved server value if local draft is invalid. */
+    }
+  }, [localKey, item.version]);
+  useEffect(() => {
+    if (dirty) {
+      try {
+        localStorage.setItem(
+          localKey,
+          JSON.stringify({ actual, unit, version: item.version }),
+        );
+      } catch {
+        setLocalError("本机未能保留输入，请保持页面打开直到保存成功。");
+      }
+    }
+  }, [actual, unit, dirty, localKey, item.version]);
+  let preview: string | null = null;
+  try {
+    if (
+      actual.trim() &&
+      item.price_snapshot !== null &&
+      new Decimal(actual).gte(0)
+    )
+      preview = lineAmount(
+        actual,
+        unit,
+        item.billing_unit,
+        item.price_snapshot,
+      );
+  } catch {
+    /* The server validates on save. */
+  }
+  const currentPrice =
+    data.products
+      .find((p) => p.id === item.product_id)
+      ?.units.find((u) => u.billingUnit === item.billing_unit)?.price ?? null;
+  const priceChanged =
+    currentPrice !== null && item.price_snapshot !== currentPrice;
+  async function save(next: boolean) {
+    setLocalError("");
+    setFailedSave(false);
+    if (!actual.trim()) {
+      setLocalError("请填写实供数量，空白不代表零或缺货");
+      input.current?.focus();
+      return;
+    }
+    if (
+      await mutate(
+        {
+          action: "saveActual",
+          id: item.id,
+          version: item.version,
+          quantity: actual,
+          unit,
+        },
+        "实供数量已保存，配货勾选保持不变",
+      )
+    ) {
+      localStorage.removeItem(localKey);
+      setDirty(false);
+      if (next) onNext();
+    } else setFailedSave(true);
+  }
+  return (
+    <article
+      className={`weigh-card ${item.unavailable ? "unavailable" : ""}`}
+      id={`actual-${item.id}`}
+    >
+      <div className="card-heading">
+        <h3>{product}</h3>
+        <span
+          className={`tag ${item.unavailable ? "amber" : item.picking_state === "picked" ? "green" : ""}`}
+        >
+          {item.unavailable
+            ? "缺货 · 不供货"
+            : item.picking_state === "picked"
+              ? "已配货"
+              : "待配货"}
+        </span>
+      </div>
+      <div className="weigh-details">
+        <span>
+          订购{" "}
+          <strong>
+            {Number(item.ordered_quantity)} {item.ordered_unit}
+          </strong>
+        </span>
+        <span>
+          单价{" "}
+          <strong>
+            {money(item.price_snapshot)}
+            {item.price_snapshot !== null ? ` / ${item.billing_unit}` : ""}
+          </strong>
+        </span>
+      </div>
+      {item.unavailable ? (
+        <div className="unavailable-body">
+          <PackageX size={27} />
+          <span>已确认不供货</span>
+          <strong>RM 0.00</strong>
+          <button
+            className="text-button"
+            disabled={busy}
+            onClick={() =>
+              void mutate(
+                {
+                  action: "setUnavailable",
+                  id: item.id,
+                  version: item.version,
+                  unavailable: false,
+                },
+                "已取消缺货，请重新确认实供",
+              )
+            }
+          >
+            取消缺货
+          </button>
+        </div>
+      ) : (
+        <>
+          {!isWeight(item.ordered_unit) && isWeight(item.billing_unit) && (
+            <p className="inline-note">
+              按 {item.ordered_unit} 订购，按实际公斤计费。请称重填写。
+            </p>
+          )}
+          <div className="actual-entry">
+            <Field
+              label={isWeight(item.billing_unit) ? "实际重量" : "实际供货数量"}
+            >
+              <input
+                ref={input}
+                data-actual-input="true"
+                aria-label={`${product}实际供货数量`}
+                inputMode="decimal"
+                placeholder={
+                  isWeight(item.billing_unit) ? "填写称重结果" : "填写数量"
+                }
+                value={actual}
+                maxLength={12}
+                disabled={busy}
+                onChange={(e) => {
+                  setActual(e.target.value);
+                  setDirty(true);
+                  setLocalError("");
+                }}
+              />
+            </Field>
+            <Field label="实供单位">
+              <select
+                aria-label={`${product}实供单位`}
+                value={unit}
+                disabled={busy}
+                onChange={(e) => {
+                  setUnit(e.target.value as Unit);
+                  setDirty(true);
+                }}
+              >
+                {(isWeight(item.billing_unit)
+                  ? ["kg", "g"]
+                  : [item.billing_unit]
+                ).map((u) => (
+                  <option key={u} value={u}>
+                    {u === "kg" ? "kg 公斤" : u === "g" ? "g 克" : u}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="amount-row">
+            <span>
+              {dirty
+                ? "预览金额 · 尚未保存"
+                : item.actual_confirmed
+                  ? "已保存金额"
+                  : "待确认金额"}
+            </span>
+            <strong>
+              {preview === null
+                ? item.price_snapshot === null
+                  ? "价格待填写"
+                  : "—"
+                : money(preview)}
+            </strong>
+          </div>
+          {item.price_snapshot === null && (
+            <p className="inline-error">
+              价格待填写。可先保存实供，再到设置填写价格并读取现价。
+            </p>
+          )}
+          {!isWeight(item.billing_unit) && !item.actual_confirmed && !dirty && (
+            <p className="inline-note">
+              已预填订购数量，请核对后点确认，不会自动计费。
+            </p>
+          )}
+          <ErrorText
+            message={localError || (failedSave ? (error ?? "") : "")}
+          />
+          <div className="weigh-actions">
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setUnavailable(true)}
+            >
+              标记缺货
+            </button>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => void save(true)}
+            >
+              <Check size={20} />
+              {busy
+                ? "保存中…"
+                : isWeight(item.billing_unit)
+                  ? "保存并下一项"
+                  : "确认并下一项"}
+              <ChevronRight size={19} />
+            </button>
+          </div>
+          {item.actual_confirmed && (
+            <p className={`saved-label ${dirty ? "unsaved" : ""}`}>
+              {dirty ? "输入已修改，尚未保存" : "✓ 实供数量已确认"}
+            </p>
+          )}
+        </>
+      )}
+      {!item.unavailable && (
+        <div className="price-footer">
+          <span>
+            {priceChanged
+              ? "设置中的现价已变化，本单仍保留原价。"
+              : "本单使用确认订单时的价格。"}
+          </span>
+          <button
+            className="text-button"
+            disabled={busy || dirty || currentPrice === null || !priceChanged}
+            onClick={() => setRefreshPrice(true)}
+          >
+            <RefreshCw size={16} />
+            读取现价
+          </button>
+        </div>
+      )}
+      {unavailable && (
+        <Modal
+          title="确认不供货？"
+          onClose={() => {
+            if (!busy) setUnavailable(false);
+          }}
+        >
+          <h3>{product}</h3>
+          <p>
+            此项将标记缺货，清除实供数量，金额设为 RM
+            0.00。配货任务也会标记为缺货。
+          </p>
+          <ErrorText message={error ?? ""} />
+          <div className="modal-actions">
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setUnavailable(false)}
+            >
+              返回
+            </button>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={async () => {
+                if (
+                  await mutate(
+                    {
+                      action: "setUnavailable",
+                      id: item.id,
+                      version: item.version,
+                      unavailable: true,
+                    },
+                    "已确认缺货，金额为 RM 0.00",
+                  )
+                ) {
+                  localStorage.removeItem(localKey);
+                  setUnavailable(false);
+                }
+              }}
+            >
+              确认缺货
+            </button>
+          </div>
+        </Modal>
+      )}
+      {refreshPrice && (
+        <Modal
+          title="更新这项订单价格？"
+          onClose={() => {
+            if (!busy) setRefreshPrice(false);
+          }}
+        >
+          <h3>{product}</h3>
+          <div className="price-change">
+            <span>
+              本单原价<strong>{money(item.price_snapshot)}</strong>
+            </span>
+            <ChevronRight />
+            <span>
+              当前价格<strong>{money(currentPrice)}</strong>
+            </span>
+          </div>
+          <p>
+            计价单位：{item.billing_unit}
+            。更新后会按已确认的实供数量重新计算金额。
+          </p>
+          <ErrorText message={error ?? ""} />
+          <div className="modal-actions">
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setRefreshPrice(false)}
+            >
+              保留原价
+            </button>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={async () => {
+                if (
+                  await mutate(
+                    {
+                      action: "refreshPrice",
+                      id: item.id,
+                      version: item.version,
+                      expectedPrice: currentPrice,
+                    },
+                    "已明确更新本单价格",
+                  )
+                )
+                  setRefreshPrice(false);
+              }}
+            >
+              确认使用现价
+            </button>
+          </div>
+        </Modal>
+      )}
+    </article>
+  );
+}
+
+export default function Weighing({ data, mutate, busy, error }: ViewProps) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const order = data.orders.find((o) => o.id === selected);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [selected]);
+  const all = data.orders.flatMap((o) => o.items);
+  function nextItem(index: number) {
+    if (!order) return;
+    const next = order.items.slice(index + 1).find((i) => !i.unavailable);
+    if (next) {
+      const card = document.getElementById(`actual-${next.id}`);
+      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(
+        () =>
+          card
+            ?.querySelector<HTMLInputElement>("[data-actual-input]")
+            ?.focus({ preventScroll: true }),
+        200,
+      );
+    }
+  }
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">核对实供，再算清每一笔</p>
+          <h1>称重与计费</h1>
+          <p>按餐馆填写实际重量，或确认供货数量</p>
+        </div>
+        <div className="page-marker">
+          <Scale size={22} />
+          {data.date}
+        </div>
+      </div>
+      {!order ? (
+        <>
+          {data.orders.length === 0 ? (
+            <Empty title="这一天还没有餐馆订单">
+              先在「今日订单」中添加并确认订单。
+            </Empty>
+          ) : (
+            <>
+              <div className="panel weighing-summary">
+                <Progress
+                  done={
+                    all.filter((i) => i.actual_confirmed || i.unavailable)
+                      .length
+                  }
+                  total={all.length}
+                  label="实供确认进度"
+                />
+              </div>
+              <div className="orders-grid">
+                {data.orders.map((o) => (
+                  <button
+                    className="restaurant-select-card"
+                    key={o.id}
+                    onClick={() => setSelected(o.id)}
+                  >
+                    <div className="card-heading">
+                      <h2>{o.restaurant_name}</h2>
+                      <ChevronRight />
+                    </div>
+                    <p>
+                      {o.items.length} 项商品 · 配货{" "}
+                      {o.items.filter(pickedResolved).length}/{o.items.length}
+                    </p>
+                    <Progress
+                      done={
+                        o.items.filter(
+                          (i) => i.actual_confirmed || i.unavailable,
+                        ).length
+                      }
+                      total={o.items.length}
+                      label="实供已确认"
+                    />
+                    <div className="restaurant-amount">
+                      <span>
+                        {o.items.every(billedResolved)
+                          ? "商品小计"
+                          : "已确认金额"}
+                      </span>
+                      <strong>{money(subtotal(o.items))}</strong>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <button
+            className="text-button back-button"
+            onClick={() => setSelected(null)}
+          >
+            <ArrowLeft size={21} />
+            返回餐馆列表
+          </button>
+          <div className="restaurant-banner">
+            <div>
+              <h2>{order.restaurant_name}</h2>
+              <span>
+                {data.date} · {order.items.length} 项商品
+              </span>
+            </div>
+            <Progress
+              done={
+                order.items.filter((i) => i.actual_confirmed || i.unavailable)
+                  .length
+              }
+              total={order.items.length}
+              label="实供已确认"
+            />
+          </div>
+          <div className="weigh-list">
+            {order.items.map((item, index) => (
+              <ActualItem
+                key={`${item.id}:${item.version}`}
+                item={item}
+                product={item.product_name}
+                data={data}
+                mutate={mutate}
+                busy={busy}
+                onNext={() => nextItem(index)}
+                error={error}
+              />
+            ))}
+          </div>
+          <div className="subtotal-panel">
+            <div>
+              <span>
+                {order.items.every(billedResolved)
+                  ? "商品小计"
+                  : "已确认商品金额"}
+              </span>
+              <strong>{money(subtotal(order.items))}</strong>
+            </div>
+            <p>
+              {order.items.every(billedResolved)
+                ? "实供与价格已齐全。"
+                : "仍有实供或价格未确认，此金额不是完整订单总额。"}
+              尚未应用最终 RM 0.10 舍入，也未生成送货单。
+            </p>
+          </div>
+        </>
+      )}
+      <div className="stage-note">
+        这是第 1 阶段的称重计费。差异警告、最终舍入和 PDF 定稿将在第 3
+        阶段加入。
+      </div>
+    </>
+  );
+}
