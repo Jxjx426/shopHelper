@@ -66,10 +66,13 @@ export function lineAmount(
       : null;
   if (normalized === null)
     throw new ValidationError("实供单位与计价单位不兼容");
-  return new Decimal(normalized)
+  const result = new Decimal(normalized)
     .mul(unitPrice)
     .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
     .toFixed(2);
+  if (new Decimal(result).gt("999999999999.99"))
+    throw new ValidationError("单项金额过大，请核对数量、单位与价格");
+  return result;
 }
 export function subtotal(items: Pick<OrderItem, "amount">[]): string {
   return items
@@ -139,6 +142,7 @@ export type OrderItem = {
   position: number;
   picking_state: "pending" | "picked" | "unavailable";
   task_version: number;
+  discrepancy_ack: string | null;
 };
 export type Order = {
   id: string;
@@ -150,14 +154,27 @@ export type Order = {
   version: number;
   created_at: string;
   items: OrderItem[];
+  deleted_at: string | null;
+  finalized_document_id: string | null;
 };
 export type Workspace = {
-  shop: { name: string };
+  shop: {
+    name: string;
+    small_weight_percent: string;
+    large_weight_percent: string;
+  };
   zones: Zone[];
   restaurants: Restaurant[];
   products: Product[];
   orders: Order[];
   date: string;
+  restaurantPrices: {
+    restaurant_id: string;
+    product_id: string;
+    billing_unit: Unit;
+    amount: string;
+    version: number;
+  }[];
 };
 export const pickedResolved = (item: OrderItem) =>
   item.picking_state !== "pending";

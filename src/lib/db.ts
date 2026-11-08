@@ -1,8 +1,10 @@
 import { PGlite } from "@electric-sql/pglite";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+// Internal additive migration revision; backup format remains version 2.
+const SCHEMA_REVISION = 5;
 
-const schema = `
+export const schema = `
 CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY);
 INSERT INTO schema_version VALUES (1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS shop (id integer PRIMARY KEY DEFAULT 1 CHECK (id=1), name text NOT NULL DEFAULT '鲜配助手');
@@ -42,13 +44,41 @@ CREATE TABLE IF NOT EXISTS extraction_attempts (
  provider text NOT NULL, model text NOT NULL, prompt_version text NOT NULL, schema_version integer NOT NULL,
  status text NOT NULL DEFAULT 'pending', error_code text, quota_day text NOT NULL, started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS extraction_cache (
+ cache_key text PRIMARY KEY, actor_id text NOT NULL REFERENCES users(id), result jsonb NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS extraction_cooldown (id integer PRIMARY KEY CHECK(id=1), until_at timestamptz NOT NULL);
 CREATE INDEX IF NOT EXISTS import_date_idx ON import_drafts(delivery_date,created_by);
 CREATE INDEX IF NOT EXISTS import_hash_idx ON import_drafts(source_hash,restaurant_id,delivery_date);
 CREATE INDEX IF NOT EXISTS attempt_started_idx ON extraction_attempts(started_at);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS original_text text;
+ALTER TABLE import_drafts ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS source_refs jsonb NOT NULL DEFAULT '[]';
 INSERT INTO schema_version VALUES (2) ON CONFLICT DO NOTHING;
+ALTER TABLE shop ADD COLUMN IF NOT EXISTS small_weight_percent numeric(5,2) NOT NULL DEFAULT 20;
+ALTER TABLE shop ADD COLUMN IF NOT EXISTS large_weight_percent numeric(5,2) NOT NULL DEFAULT 10;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS finalized_document_id text;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discrepancy_ack text;
+DROP INDEX IF EXISTS restaurant_date_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS active_restaurant_date_unique ON orders(restaurant_id,delivery_date) WHERE deleted_at IS NULL;
+CREATE TABLE IF NOT EXISTS restaurant_prices (
+ restaurant_id text NOT NULL REFERENCES restaurants(id), product_id text NOT NULL REFERENCES products(id), billing_unit text NOT NULL,
+ amount numeric(12,2) NOT NULL CHECK(amount>=0), version integer NOT NULL DEFAULT 1,
+ PRIMARY KEY(restaurant_id,product_id,billing_unit)
+);
+CREATE SEQUENCE IF NOT EXISTS delivery_document_no;
+CREATE TABLE IF NOT EXISTS documents (
+ id text PRIMARY KEY,order_id text NOT NULL REFERENCES orders(id),number text NOT NULL UNIQUE,
+ revision integer NOT NULL,sequence_no bigint NOT NULL UNIQUE,snapshot jsonb NOT NULL,pdf bytea NOT NULL,pdf_sha256 text NOT NULL,
+ superseded_at timestamptz,superseded_pdf bytea,created_by text NOT NULL REFERENCES users(id),created_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(order_id,revision)
+);
+CREATE TABLE IF NOT EXISTS restore_previews (
+ id text PRIMARY KEY,actor_id text NOT NULL REFERENCES users(id),payload jsonb NOT NULL,state_hash text NOT NULL,expires_at timestamptz NOT NULL
+);
+INSERT INTO schema_version VALUES (3) ON CONFLICT DO NOTHING;
 `;
 
 declare global {
@@ -56,9 +86,12 @@ declare global {
   var shopDatabaseSchema: number | undefined;
 }
 export async function getDb() {
-  if (!globalThis.shopDatabase || globalThis.shopDatabaseSchema !== 2) {
+  if (
+    !globalThis.shopDatabase ||
+    globalThis.shopDatabaseSchema !== SCHEMA_REVISION
+  ) {
     const prior = globalThis.shopDatabase;
-    globalThis.shopDatabaseSchema = 2;
+    globalThis.shopDatabaseSchema = SCHEMA_REVISION;
     globalThis.shopDatabase = (async () => {
       const directory =
         process.env.SHOP_DATA_DIR ??

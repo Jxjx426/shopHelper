@@ -1,6 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getDb, type Transaction } from "./db";
+import { resolvePrice } from "./pricing.server";
+import { discrepancy } from "./billing";
+import { copyPlan } from "./history.server";
+import {
+  applyDocument,
+  documentActionSchemas,
+  loadOrder,
+  requireOwner,
+} from "./documents.server";
 import {
   UNITS,
   isWeight,
@@ -16,14 +25,8 @@ import {
   type Zone,
 } from "./domain";
 
-export class AppError extends Error {
-  constructor(
-    message: string,
-    public status = 400,
-  ) {
-    super(message);
-  }
-}
+import { AppError } from "./errors";
+export { AppError } from "./errors";
 const id = z.string().min(1).max(100);
 const name = z.string().trim().min(1, "名称不能为空").max(80, "名称最多80个字");
 const unit = z.enum(UNITS);
@@ -33,6 +36,35 @@ const date = z.string().refine(validDate, "请选择有效日期");
 const amount = z.string().max(30);
 const schemas = [
   z.object({ action: z.literal("saveShop"), name }),
+  z.object({
+    action: z.literal("saveThresholds"),
+    small: z.string().regex(/^\d{1,3}(\.\d{1,2})?$/),
+    large: z.string().regex(/^\d{1,3}(\.\d{1,2})?$/),
+  }),
+  z.object({
+    action: z.literal("saveRestaurantPrice"),
+    restaurantId: id,
+    productId: id,
+    billingUnit: unit,
+    price: amount.nullable(),
+    expectedVersion: z.number().int().min(0),
+  }),
+  z.object({
+    action: z.literal("setOrderDeleted"),
+    id,
+    version,
+    deleted: z.boolean(),
+  }),
+  z.object({
+    action: z.literal("copyOrder"),
+    id,
+    version,
+    date,
+    token: z.string().length(64),
+    mode: z.enum(["new", "replace"]),
+    targetVersion: version.optional(),
+  }),
+  ...documentActionSchemas,
   z.object({
     action: z.literal("saveZone"),
     id: id.optional(),
@@ -110,6 +142,8 @@ const schemas = [
     version,
     quantity: amount,
     unit,
+    acknowledgeDiscrepancy: z.boolean().default(false),
+    expectedDiscrepancyKey: z.string().max(300).optional(),
   }),
   z.object({
     action: z.literal("refreshPrice"),
@@ -167,7 +201,9 @@ export async function workspace(selectedDate: string): Promise<Workspace> {
   // A single transaction gives this date workspace a consistent snapshot.
   return db.transaction(async (tx) => {
     const shop = (
-      await tx.query<{ name: string }>("SELECT name FROM shop WHERE id=1")
+      await tx.query<Workspace["shop"]>(
+        "SELECT name,small_weight_percent::text,large_weight_percent::text FROM shop WHERE id=1",
+      )
     ).rows[0];
     const zones = (
       await tx.query<Zone>("SELECT * FROM zones ORDER BY sort_order,id")
@@ -182,13 +218,13 @@ export async function workspace(selectedDate: string): Promise<Workspace> {
     ).rows;
     const orders = (
       await tx.query<Omit<Order, "items">>(
-        "SELECT id,restaurant_id,restaurant_name,delivery_date::text,urgent,picking_started_at,version,created_at FROM orders WHERE delivery_date=$1::date ORDER BY created_at,id",
+        "SELECT id,restaurant_id,restaurant_name,delivery_date::text,urgent,picking_started_at,version,created_at,deleted_at,finalized_document_id FROM orders WHERE delivery_date=$1::date AND deleted_at IS NULL ORDER BY created_at,id",
         [selectedDate],
       )
     ).rows;
     const items = (
       await tx.query<OrderItem>(
-        `SELECT i.*,t.state picking_state,t.version task_version FROM order_items i JOIN picking_tasks t ON t.order_item_id=i.id JOIN orders o ON o.id=i.order_id WHERE o.delivery_date=$1::date ORDER BY i.position,i.id`,
+        `SELECT i.*,t.state picking_state,t.version task_version FROM order_items i JOIN picking_tasks t ON t.order_item_id=i.id JOIN orders o ON o.id=i.order_id WHERE o.delivery_date=$1::date AND o.deleted_at IS NULL ORDER BY i.position,i.id`,
         [selectedDate],
       )
     ).rows;
@@ -198,6 +234,11 @@ export async function workspace(selectedDate: string): Promise<Workspace> {
       restaurants,
       products,
       date: selectedDate,
+      restaurantPrices: (
+        await tx.query<Workspace["restaurantPrices"][number]>(
+          "SELECT restaurant_id,product_id,billing_unit,amount::text,version FROM restaurant_prices",
+        )
+      ).rows,
       orders: orders.map((order) => ({
         ...order,
         items: items.filter((item) => item.order_id === order.id),
@@ -211,6 +252,121 @@ export async function apply(
   actor: string,
   a: Action,
 ): Promise<{ id: string }> {
+  if (a.action === "finalizeOrder" || a.action === "reopenOrder")
+    return applyDocument(tx, actor, a);
+  if (a.action === "saveThresholds") {
+    await requireOwner(tx, actor);
+    ensure(
+      Number(a.small) <= 100 && Number(a.large) <= 100,
+      "差异阈值须在 0 至 100% 之间",
+    );
+    await tx.query(
+      "UPDATE shop SET small_weight_percent=$1,large_weight_percent=$2 WHERE id=1",
+      [a.small, a.large],
+    );
+    await record(tx, actor, a.action, "1", { small: a.small, large: a.large });
+    return { id: "1" };
+  }
+  if (a.action === "saveRestaurantPrice") {
+    await requireOwner(tx, actor);
+    await row<Restaurant>(tx, "restaurants", a.restaurantId);
+    ensure(
+      (
+        await tx.query(
+          "SELECT 1 FROM product_units WHERE product_id=$1 AND billing_unit=$2",
+          [a.productId, a.billingUnit],
+        )
+      ).rows.length,
+      "商品未配置此计价单位",
+    );
+    const previous = (
+      await tx.query<{ version: number }>(
+        "SELECT version FROM restaurant_prices WHERE restaurant_id=$1 AND product_id=$2 AND billing_unit=$3",
+        [a.restaurantId, a.productId, a.billingUnit],
+      )
+    ).rows[0];
+    ensure(
+      (previous?.version ?? 0) === a.expectedVersion,
+      "餐馆价格已变化，请重新读取",
+      409,
+    );
+    const value = price(a.price);
+    if (value === null)
+      await tx.query(
+        "DELETE FROM restaurant_prices WHERE restaurant_id=$1 AND product_id=$2 AND billing_unit=$3",
+        [a.restaurantId, a.productId, a.billingUnit],
+      );
+    else
+      await tx.query(
+        "INSERT INTO restaurant_prices(restaurant_id,product_id,billing_unit,amount) VALUES($1,$2,$3,$4) ON CONFLICT(restaurant_id,product_id,billing_unit) DO UPDATE SET amount=excluded.amount,version=restaurant_prices.version+1",
+        [a.restaurantId, a.productId, a.billingUnit, value],
+      );
+    await record(tx, actor, a.action, a.restaurantId, {
+      productId: a.productId,
+      unit: a.billingUnit,
+      price: value,
+    });
+    return { id: a.restaurantId };
+  }
+  if (a.action === "setOrderDeleted") {
+    await requireOwner(tx, actor);
+    const order = await loadOrder(tx, a.id, true);
+    checkVersion(order, a.version);
+    ensure(
+      Boolean(order.deleted_at) !== a.deleted,
+      a.deleted ? "订单已删除" : "订单已恢复",
+      409,
+    );
+    if (!a.deleted)
+      ensure(
+        !(
+          await tx.query(
+            "SELECT id FROM orders WHERE restaurant_id=$1 AND delivery_date=$2::date AND deleted_at IS NULL AND id<>$3",
+            [order.restaurant_id, order.delivery_date, order.id],
+          )
+        ).rows.length,
+        "当天已有另一份订单，请先处理原订单，避免重复需求",
+        409,
+      );
+    await tx.query(
+      "UPDATE orders SET deleted_at=CASE WHEN $1 THEN now() ELSE NULL END,version=version+1 WHERE id=$2",
+      [a.deleted, a.id],
+    );
+    await record(tx, actor, a.action, a.id, { deleted: a.deleted });
+    return { id: a.id };
+  }
+  if (a.action === "copyOrder") {
+    await requireOwner(tx, actor);
+    const planned = await copyPlan(tx, a.id, a.date);
+    const { source, target } = planned;
+    checkVersion(source, a.version);
+    ensure(
+      planned.token === a.token,
+      "目标订单或现价已变化，请重新核对复制预览",
+      409,
+    );
+    ensure(
+      !target || a.mode === "replace",
+      "目标日期已有订单，请核对后明确选择替换，或更改日期",
+      409,
+    );
+    ensure(target || a.mode === "new", "目标订单已变化，请重新读取", 409);
+    if (target) checkVersion(target, a.targetVersion);
+    const result = await apply(tx, actor, {
+      action: "saveOrder",
+      ...(target ? { id: target.id, version: target.version } : {}),
+      restaurantId: source.restaurant_id,
+      date: a.date,
+      urgent: false,
+      items: source.items.map((i) => ({
+        productId: i.product_id,
+        quantity: quantity(i.ordered_quantity),
+        unit: i.ordered_unit,
+      })),
+    });
+    await record(tx, actor, a.action, result.id, { from: a.id, date: a.date });
+    return result;
+  }
   if (a.action === "saveShop") {
     await tx.query("UPDATE shop SET name=$1 WHERE id=1", [a.name]);
     await record(tx, actor, a.action, "1", { name: a.name });
@@ -343,6 +499,11 @@ export async function apply(
     const entityId = a.id ?? randomUUID();
     if (a.id) {
       const existing = await row<Order>(tx, "orders", a.id);
+      ensure(
+        !existing.deleted_at && !existing.finalized_document_id,
+        "此订单已删除或定稿，不能修改",
+        409,
+      );
       checkVersion(existing, a.version);
       ensure(
         !existing.picking_started_at,
@@ -363,7 +524,7 @@ export async function apply(
       ensure(
         !(
           await tx.query(
-            "SELECT id FROM orders WHERE restaurant_id=$1 AND delivery_date=$2::date",
+            "SELECT id FROM orders WHERE restaurant_id=$1 AND delivery_date=$2::date AND deleted_at IS NULL",
             [a.restaurantId, a.date],
           )
         ).rows.length,
@@ -410,7 +571,7 @@ export async function apply(
           ordered,
           line.unit,
           rule.billing_unit,
-          rule.amount,
+          await resolvePrice(tx, a.restaurantId, product.id, rule.billing_unit),
         ],
       );
       await tx.query(
@@ -427,6 +588,7 @@ export async function apply(
   }
   if (a.action === "setUrgent") {
     const order = await row<Order>(tx, "orders", a.id);
+    ensure(!order.deleted_at, "订单已删除", 409);
     checkVersion(order, a.version);
     await tx.query(
       "UPDATE orders SET urgent=$1,version=version+1 WHERE id=$2",
@@ -437,6 +599,12 @@ export async function apply(
   }
   const item = await row<OrderItem>(tx, "order_items", a.id);
   const order = await row<Order>(tx, "orders", item.order_id);
+  ensure(!order.deleted_at, "订单已删除，请刷新", 409);
+  ensure(
+    !order.finalized_document_id,
+    "送货单已定稿，请先由店主重新打开修订",
+    409,
+  );
   if (a.action === "setPicking") {
     const task = (
       await tx.query<{ version: number; state: string }>(
@@ -461,7 +629,7 @@ export async function apply(
   checkVersion(item, a.version);
   if (a.action === "setUnavailable") {
     await tx.query(
-      "UPDATE order_items SET unavailable=$1,actual_quantity=NULL,actual_unit=NULL,actual_confirmed=false,amount=$2,version=version+1,updated_at=now() WHERE id=$3",
+      "UPDATE order_items SET unavailable=$1,actual_quantity=NULL,actual_unit=NULL,actual_confirmed=false,discrepancy_ack=NULL,amount=$2,version=version+1,updated_at=now() WHERE id=$3",
       [a.unavailable, a.unavailable ? "0.00" : null, a.id],
     );
     await tx.query(
@@ -490,13 +658,31 @@ export async function apply(
       "实供单位与计价单位不兼容",
     );
     ensure(isWeight(a.unit) || !actual.includes("."), "按件商品请输入整数数量");
+    const thresholds = (
+      await tx.query<Workspace["shop"]>(
+        "SELECT small_weight_percent::text,large_weight_percent::text FROM shop WHERE id=1",
+      )
+    ).rows[0];
+    const warning = discrepancy(
+      item.ordered_quantity,
+      item.ordered_unit,
+      actual,
+      a.unit,
+      thresholds,
+    );
+    if (warning?.warning)
+      ensure(
+        a.acknowledgeDiscrepancy && a.expectedDiscrepancyKey === warning.key,
+        `重量${warning.direction} ${warning.percent}%，超过 ${warning.threshold}%，请核对并确认此重量`,
+        422,
+      );
     const total =
       item.price_snapshot === null
         ? null
         : lineAmount(actual, a.unit, item.billing_unit, item.price_snapshot);
     await tx.query(
-      "UPDATE order_items SET actual_quantity=$1,actual_unit=$2,actual_confirmed=true,amount=$3,version=version+1,updated_at=now() WHERE id=$4",
-      [actual, a.unit, total, a.id],
+      "UPDATE order_items SET actual_quantity=$1,actual_unit=$2,actual_confirmed=true,amount=$3,discrepancy_ack=$5,version=version+1,updated_at=now() WHERE id=$4",
+      [actual, a.unit, total, a.id, warning?.warning ? warning.key : null],
     );
     // Quantity entry never changes picking state or the picking-start lock.
     await record(tx, actor, a.action, a.id, {
@@ -507,12 +693,12 @@ export async function apply(
     return { id: a.id };
   }
   if (a.action === "refreshPrice") {
-    const current = (
-      await tx.query<{ amount: string | null }>(
-        "SELECT amount::text FROM prices WHERE product_id=$1 AND billing_unit=$2",
-        [item.product_id, item.billing_unit],
-      )
-    ).rows[0]?.amount;
+    const current = await resolvePrice(
+      tx,
+      order.restaurant_id,
+      item.product_id,
+      item.billing_unit,
+    );
     ensure(
       current !== null && current !== undefined,
       "商品尚未设置这个计价单位的价格，请先到设置中填写",
@@ -596,41 +782,50 @@ export async function runAction(
 
 export async function exportBackup() {
   const db = await getDb();
-  return db.transaction(async (tx) => {
-    const tables: Record<string, unknown[]> = {};
-    // Sessions, password hashes and API keys intentionally never leave the server.
-    for (const table of [
-      "shop",
-      "zones",
-      "restaurants",
-      "products",
-      "product_units",
-      "prices",
-      "orders",
-      "order_items",
-      "picking_tasks",
-      "change_records",
-      "import_drafts",
-      "extraction_attempts",
-    ])
-      tables[table] = (
-        await tx.query(
-          `SELECT *${table === "orders" || table === "import_drafts" ? ",delivery_date::text AS delivery_date" : ""} FROM ${table}`,
-        )
-      ).rows;
-    tables.import_images = (
+  return db.transaction(backupIn);
+}
+export async function backupIn(tx: Transaction) {
+  const tables: Record<string, unknown[]> = {};
+  // Sessions, password hashes and API keys intentionally never leave the server.
+  for (const table of [
+    "shop",
+    "zones",
+    "restaurants",
+    "products",
+    "product_units",
+    "prices",
+    "restaurant_prices",
+    "orders",
+    "order_items",
+    "picking_tasks",
+    "change_records",
+    "import_drafts",
+    "extraction_attempts",
+  ])
+    tables[table] = (
       await tx.query(
-        "SELECT draft_id,original_mime,encode(original_image,'base64') original_base64,prepared_mime,encode(prepared_image,'base64') prepared_base64 FROM import_images",
+        `SELECT *${table === "orders" || table === "import_drafts" ? ",delivery_date::text AS delivery_date" : ""} FROM ${table}`,
       )
     ).rows;
-    const actors = (await tx.query("SELECT id,name,role FROM users")).rows;
-    return {
-      format: "fresh-helper-stage2",
-      schemaVersion: 2,
-      exportedAt: new Date().toISOString(),
-      timezone: "Asia/Kuala_Lumpur",
-      actors,
-      tables,
-    };
-  });
+  tables.import_images = (
+    await tx.query(
+      "SELECT draft_id,original_mime,encode(original_image,'base64') original_base64,prepared_mime,encode(prepared_image,'base64') prepared_base64 FROM import_images",
+    )
+  ).rows;
+  tables.documents = (
+    await tx.query(
+      "SELECT id,order_id,number,revision,sequence_no::text,snapshot,pdf_sha256,superseded_at,created_by,created_at,encode(pdf,'base64') pdf_base64,encode(superseded_pdf,'base64') superseded_base64 FROM documents",
+    )
+  ).rows;
+  const actors = (await tx.query("SELECT id,name,role FROM users")).rows;
+  const data = {
+    format: "fresh-helper-stage3",
+    schemaVersion: 3,
+    exportedAt: new Date().toISOString(),
+    timezone: "Asia/Kuala_Lumpur",
+    actors,
+    tables,
+  };
+  const { backupChecksum } = await import("./backup-checksum");
+  return { ...data, checksum: backupChecksum(data) };
 }

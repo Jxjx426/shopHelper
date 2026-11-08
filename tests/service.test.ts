@@ -469,7 +469,7 @@ test("zones cannot deactivate active products; catalog deactivation preserves hi
 test("backup includes all dates and actor references but excludes credentials", async () => {
   const backup = await exportBackup();
   const serialized = JSON.stringify(backup);
-  assert.equal(backup.schemaVersion, 2);
+  assert.equal(backup.schemaVersion, 3);
   assert(backup.tables.orders.length > 0);
   assert(backup.actors.length > 0);
   assert(!serialized.includes("password_hash"));

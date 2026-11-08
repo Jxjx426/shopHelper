@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     const token = await db.transaction(async (tx) => {
       const existing = (
         await tx.query<{ id: string; password_hash: string }>(
-          "SELECT id,password_hash FROM users LIMIT 1",
+          "SELECT id,password_hash FROM users WHERE role IN ('owner','admin') ORDER BY created_at,id LIMIT 1",
         )
       ).rows[0];
       if (a.action === "setup") {
