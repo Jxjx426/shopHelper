@@ -92,6 +92,39 @@ export function sourceLines(text: string) {
     .filter((l) => l.text.length > 0);
 }
 
+/** Only parse a single literal product, numeric quantity and explicit unit. */
+export function parseTextLocally(
+  text: string,
+  products: Product[],
+): ReviewLine[] {
+  const units = Object.keys(equivalents)
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  const pattern = new RegExp(
+    `^(.+?)\\s*(?:[x×:：]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(${units})$`,
+    "iu",
+  );
+  return buildReview(
+    {
+      detectedRestaurant: null,
+      unreadableContent: false,
+      lines: sourceLines(text).map(({ text: source, line }) => {
+        const match = source.match(pattern);
+        return {
+          sourceLine: line,
+          sourceText: source,
+          productText: match?.[1].trim() ?? null,
+          quantity: match?.[2] ?? null,
+          unitText: match?.[3] ?? null,
+          uncertain: false,
+        };
+      }),
+    },
+    text,
+    products,
+  );
+}
+
 export function matchProduct(
   term: string,
   products: Product[],

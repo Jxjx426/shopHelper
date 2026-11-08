@@ -8,6 +8,7 @@ import {
   previewImport,
   saveDraft,
   supplementDraft,
+  setDraftDeleted,
 } from "@/lib/imports.server";
 import { AppError } from "@/lib/service";
 export const runtime = "nodejs";
@@ -31,6 +32,8 @@ export async function POST(request: NextRequest, context: Context) {
       throw new AppError("导入请求格式无效");
     const { action, ...input } = body;
     const key = request.headers.get("idempotency-key") ?? "";
+    if (action === "setDeleted")
+      return json(await setDraftDeleted(user.id, id, key, input));
     if (action === "save")
       return json(await saveDraft(user.id, id, key, input));
     if (action === "extract")

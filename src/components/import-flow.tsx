@@ -10,6 +10,8 @@ import {
   ArrowLeft,
   Eye,
   Save,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
 import { clientId } from "@/lib/client-id";
 import { money, type Product, type Unit } from "@/lib/domain";
@@ -65,13 +67,26 @@ export function DraftImports({
   refresh: number;
 }) {
   const [drafts, setDrafts] = useState<DraftSummary[]>([]);
+  const [deletedDrafts, setDeletedDrafts] = useState<DraftSummary[]>([]);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [deleting, setDeleting] = useState<DraftSummary | null>(null);
+  const [working, setWorking] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [operationError, setOperationError] = useState("");
+  const lock = useRef(false);
+  const pendingRequest = useRef<{ signature: string; key: string } | null>(
+    null,
+  );
   const [error, setError] = useState("");
   useEffect(() => {
     let cancelled = false;
-    void api<{ drafts: DraftSummary[] }>(`/api/imports?date=${date}`)
+    void api<{ drafts: DraftSummary[]; deletedDrafts: DraftSummary[] }>(
+      `/api/imports?date=${date}`,
+    )
       .then((value) => {
         if (!cancelled) {
           setDrafts(value.drafts);
+          setDeletedDrafts(value.deletedDrafts);
           setError("");
         }
       })
@@ -81,34 +96,118 @@ export function DraftImports({
     return () => {
       cancelled = true;
     };
-  }, [date, refresh]);
-  if (!drafts.length && !error) return null;
+  }, [date, refresh, revision]);
+  useEffect(() => {
+    setShowDeleted(false);
+    setDeleting(null);
+    setOperationError("");
+  }, [date]);
+  async function changeDeleted(draft: DraftSummary, deleted: boolean) {
+    if (lock.current) return;
+    lock.current = true;
+    setWorking(true);
+    setOperationError("");
+    const signature = `${draft.id}:${draft.version}:${deleted}`;
+    if (pendingRequest.current?.signature !== signature)
+      pendingRequest.current = { signature, key: clientId() };
+    try {
+      await api(
+        `/api/imports/${draft.id}`,
+        { action: "setDeleted", version: draft.version, deleted },
+        pendingRequest.current.key,
+      );
+      pendingRequest.current = null;
+      setDeleting(null);
+    } catch (error) {
+      setOperationError(
+        error instanceof Error ? error.message : "操作失败，请重试",
+      );
+      setDeleting(null);
+    } finally {
+      setRevision((v) => v + 1);
+      setWorking(false);
+      lock.current = false;
+    }
+  }
+  if (!drafts.length && !deletedDrafts.length && !error && !operationError)
+    return null;
   return (
     <section className="draft-imports">
       <div className="section-heading">
-        <h2>待处理导入草稿</h2>
-        <span>{drafts.length} 份</span>
+        <h2>{showDeleted ? "已删除草稿" : "待审核草稿"}</h2>
+        <span>{showDeleted ? deletedDrafts.length : drafts.length} 份</span>
       </div>
-      <p className="fine-print">未确认的草稿不会进入配货清单。</p>
-      <ErrorText message={error} />
-      {drafts.map((draft) => (
+      {(deletedDrafts.length > 0 || showDeleted) && (
         <button
-          className="draft-import-row"
-          key={draft.id}
-          onClick={() => onOpen(draft.id)}
+          className="text-button"
+          onClick={() => setShowDeleted((v) => !v)}
+          disabled={working}
         >
-          {draft.source_kind === "image" ? (
-            <ImageIcon size={22} />
-          ) : (
-            <FileText size={22} />
-          )}
-          <span>
-            <strong>{draft.restaurant_name}</strong>
-            <small>{draftLabels[draft.status]}</small>
-          </span>
-          <span className="text-button">继续审核 →</span>
+          {showDeleted ? "返回待审核" : `已删除（${deletedDrafts.length}）`}
         </button>
+      )}
+      <ErrorText message={operationError || error} />
+      {(showDeleted ? deletedDrafts : drafts).map((draft) => (
+        <div className="draft-import-row" key={draft.id}>
+          <button
+            className="draft-open"
+            disabled={working || showDeleted}
+            onClick={() => onOpen(draft.id)}
+            aria-label={`继续审核：${draft.restaurant_name}`}
+          >
+            {draft.source_kind === "image" ? (
+              <ImageIcon size={22} />
+            ) : (
+              <FileText size={22} />
+            )}
+            <span className="draft-info">
+              <strong>{draft.restaurant_name}</strong>
+              {!showDeleted && <small>{draftLabels[draft.status]}</small>}
+            </span>
+            {!showDeleted && <span className="draft-continue">审核 →</span>}
+          </button>
+          <button
+            className={`text-button ${showDeleted ? "" : "draft-delete"}`}
+            disabled={working || draft.status === "extracting"}
+            aria-label={`${showDeleted ? "恢复" : "删除"}草稿：${draft.restaurant_name}`}
+            onClick={() =>
+              showDeleted
+                ? void changeDeleted(draft, false)
+                : setDeleting(draft)
+            }
+          >
+            {showDeleted ? <RotateCcw size={19} /> : <Trash2 size={19} />}
+            {showDeleted ? "恢复" : "删除"}
+          </button>
+        </div>
       ))}
+      {deleting && (
+        <Modal
+          title="删除草稿？"
+          onClose={() => {
+            if (!working) setDeleting(null);
+          }}
+        >
+          <h3>{deleting.restaurant_name}</h3>
+          <p>删除后可以在「已删除」中恢复。</p>
+          <div className="modal-actions">
+            <button
+              className="secondary"
+              disabled={working}
+              onClick={() => setDeleting(null)}
+            >
+              取消
+            </button>
+            <button
+              className="primary"
+              disabled={working}
+              onClick={() => void changeDeleted(deleting, true)}
+            >
+              {working ? "处理中…" : "删除草稿"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }
@@ -194,6 +293,8 @@ export default function ImportFlow({
   const [message, setMessage] = useState("");
   const [consent, setConsent] = useState(false);
   const [replaceExtraction, setReplaceExtraction] = useState(false);
+  const [extractAll, setExtractAll] = useState(false);
+  const [forceExtraction, setForceExtraction] = useState(false);
   const [viewSource, setViewSource] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [mode, setMode] = useState<ConfirmationMode>("new");
@@ -438,27 +539,38 @@ export default function ImportFlow({
     setMessage(
       result.reused
         ? "这份内容已有未确认草稿，已打开原草稿，不会重复生成需求。"
-        : "原稿已保存。可以使用 Gemini，或直接手动审核。",
+        : kind === "text"
+          ? "原稿已保存。文字已先用规则和别名匹配，请审核。"
+          : "原图已保存，可识别或手动填写。",
     );
   }
   async function extract() {
     if (!draft || !consent) throw new Error("请先阅读数据说明并勾选确认");
     const current = dirty ? await saveCurrent() : draft;
-    const result = await write<{ error?: string }>(
-      `/api/imports/${current.id}`,
-      {
-        action: "extract",
-        version: current.version,
-        privacyVersion: PRIVACY_VERSION,
-        redacted: true,
-        replaceExisting: replaceExtraction,
-      },
-    );
+    const result = await write<{
+      error?: string;
+      cached?: boolean;
+      replayed?: boolean;
+    }>(`/api/imports/${current.id}`, {
+      action: "extract",
+      version: current.version,
+      privacyVersion: PRIVACY_VERSION,
+      redacted: true,
+      replaceExisting: replaceExtraction,
+      scope: extractAll ? "all" : "unresolved",
+      force: forceExtraction,
+    });
     setConsent(false);
     setReplaceExtraction(false);
+    setForceExtraction(false);
     await reloadDraft(current.id);
     setMessage(
-      result.error ?? "已识别。请逐项核对并确认，内容尚未进入配货清单。",
+      result.error ??
+        (result.cached
+          ? "已复用保存的识别结果，未调用 Gemini。请核对。"
+          : result.replayed
+            ? "没有需要 AI 识别的行，请直接审核。"
+            : "已识别，请逐项核对并确认。"),
     );
   }
   const existing = data.orders.find(
@@ -476,9 +588,11 @@ export default function ImportFlow({
   const readOnly = draft?.status === "confirmed";
   const blocked = pending || busy || draft?.status === "extracting" || readOnly;
   const needsReplace =
-    draft?.lines.some(
+    (extractAll || draft?.source_kind === "image") &&
+    (draft?.lines.some(
       (line) => line.reviewed || line.productId || line.quantity || line.unit,
-    ) ?? false;
+    ) ??
+      false);
   return (
     <Modal
       title={
@@ -763,6 +877,26 @@ export default function ImportFlow({
                     {config.reason}。配置方法见 README；不要在这里输入密钥。
                   </div>
                 )}
+                {draft.source_kind === "text" && (
+                  <label className="check-line">
+                    <input
+                      type="checkbox"
+                      checked={extractAll}
+                      disabled={blocked}
+                      onChange={(e) => setExtractAll(e.target.checked)}
+                    />
+                    让 AI 识别整份文字（默认只处理未解决的行）
+                  </label>
+                )}
+                <label className="check-line">
+                  <input
+                    type="checkbox"
+                    checked={forceExtraction}
+                    disabled={blocked}
+                    onChange={(e) => setForceExtraction(e.target.checked)}
+                  />
+                  跳过已存结果，重新请求 AI（会占用配额）
+                </label>
                 <label className="check-line">
                   <input
                     type="checkbox"
@@ -1011,6 +1145,14 @@ export default function ImportFlow({
                               }
                             >
                               <option value="">请选择</option>
+                              {line.unit &&
+                                !product?.units.some(
+                                  (u) => u.orderUnit === line.unit,
+                                ) && (
+                                  <option value={line.unit}>
+                                    {line.unit}（待核对）
+                                  </option>
+                                )}
                               {product?.units.map((u) => (
                                 <option key={u.orderUnit} value={u.orderUnit}>
                                   {u.orderUnit}

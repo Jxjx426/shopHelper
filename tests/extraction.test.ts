@@ -5,6 +5,7 @@ import {
   extractionSchema,
   matchProduct,
   normalizeUnit,
+  parseTextLocally,
   type ExtractionResult,
 } from "../src/lib/extraction";
 import {
@@ -13,6 +14,7 @@ import {
   GeminiExtractionProvider,
 } from "../src/lib/gemini.server";
 import type { Product } from "../src/lib/domain";
+import { preparedImageSize } from "../src/lib/image-limits";
 const product = (
   id: string,
   name: string,
@@ -58,6 +60,40 @@ test("canonical names and aliases never merge distinct Timun products or choose 
   assert.equal(matchProduct("Gobis", catalog).by, "ambiguous");
   assert.equal(matchProduct("Japanese Timun", catalog).id, "");
   assert.equal(matchProduct("Japanese Timun", catalog).by, "suggested");
+});
+
+test("local parsing uses exact saved aliases and literal quantities without guessing incomplete fields", () => {
+  const lines = parseTextLocally(
+    "Timun 2kg\n日本timun 500g\nGobis 1kg\n青龙菜1.\nTimun 2\nUnknown 3 box",
+    catalog,
+  );
+  assert.equal(lines[0].productId, "timun");
+  assert.equal(lines[0].quantity, "2");
+  assert.equal(lines[0].reviewed, false);
+  assert.equal(lines[1].productId, "japanese");
+  assert.equal(lines[1].unit, "g");
+  assert.equal(lines[2].productId, "");
+  assert.equal(lines[2].matchedBy, "ambiguous");
+  for (const line of lines.slice(3, 5)) {
+    assert.equal(line.quantity, "");
+    assert.equal(line.unit, "");
+  }
+  assert.equal(lines[5].productId, "");
+  assert.equal(lines[5].quantity, "3");
+  assert.equal(lines[5].unit, "箱");
+});
+
+test("prepared screenshots downsize without upscaling or making long screenshots too narrow", () => {
+  assert.deepEqual(preparedImageSize(3000, 6000), {
+    width: 1600,
+    height: 3200,
+  });
+  assert.deepEqual(preparedImageSize(1080, 8000), {
+    width: 1080,
+    height: 8000,
+  });
+  assert.deepEqual(preparedImageSize(800, 600), { width: 800, height: 600 });
+  assert.throws(() => preparedImageSize(1000, 20000), /截图太长/);
 });
 test("every pasted nonempty line remains visible even if Gemini omitted a header or unreadable line", () => {
   const raw = result([

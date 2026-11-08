@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import sharp from "sharp";
+import { resolvePrice } from "./pricing.server";
+import { preparedImageSize } from "./image-limits";
 import Decimal from "decimal.js";
 import { z } from "zod";
 import { getDb, type Transaction } from "./db";
@@ -16,6 +18,7 @@ import {
 import {
   blankLine,
   buildReview,
+  parseTextLocally,
   extractionSchema,
   lineProblems,
   sourceLines,
@@ -27,6 +30,7 @@ import {
   PROMPT_VERSION,
   SCHEMA_VERSION,
   type OrderExtractionProvider,
+  type ExtractionInput,
 } from "./gemini.server";
 import {
   MAX_IMAGE_BYTES,
@@ -91,6 +95,7 @@ async function draftRow(
   tx: Transaction,
   actor: string,
   id: string,
+  includeDeleted = false,
 ): Promise<ImportDraft> {
   const draft = (
     await tx.query<ImportDraft>(
@@ -99,6 +104,11 @@ async function draftRow(
     )
   ).rows[0];
   ensure(draft, "导入草稿不存在", 404);
+  ensure(
+    includeDeleted || !draft.deleted_at,
+    "草稿已删除，可在已删除草稿中恢复",
+    404,
+  );
   return draft;
 }
 function editable(draft: ImportDraft, version: number) {
@@ -159,7 +169,7 @@ async function replay<T>(
   );
   return response;
 }
-async function raster(input: z.infer<typeof imageInput>) {
+async function raster(input: z.infer<typeof imageInput>, prepare = false) {
   ensure(/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64), "图片编码无效");
   const bytes = Buffer.from(input.base64, "base64");
   ensure(
@@ -179,14 +189,26 @@ async function raster(input: z.infer<typeof imageInput>) {
       "图片尺寸不支持，请分成较小截图",
     );
     // Re-encoding removes EXIF and embedded metadata; originals remain visually intact.
-    const cleaned = await image.rotate().png().toBuffer();
+    const dimensions =
+      meta.orientation && meta.orientation >= 5
+        ? { width: meta.height!, height: meta.width! }
+        : { width: meta.width!, height: meta.height! };
+    const cleaned = prepare
+      ? await image
+          .rotate()
+          .resize(preparedImageSize(dimensions.width, dimensions.height))
+          .jpeg({ quality: 94 })
+          .toBuffer()
+      : await image.rotate().png().toBuffer();
     ensure(
       cleaned.length <= MAX_IMAGE_BYTES * 2,
       "图片展开后太大，请裁剪成较小截图",
     );
-    return { bytes: cleaned, mime: "image/png" };
+    return { bytes: cleaned, mime: prepare ? "image/jpeg" : "image/png" };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    if (error instanceof Error && error.message.startsWith("截图太长"))
+      throw new AppError(error.message);
     throw new AppError("图片无法读取，请使用手机截图的 PNG/JPG 格式");
   }
 }
@@ -204,7 +226,7 @@ export async function createImport(actor: string, key: string, input: unknown) {
     ensure(!a.original && !a.prepared, "文字导入不能夹带图片");
   } else ensure(a.original && a.prepared, "请选择截图并确认用于识别的图片");
   const original = a.kind === "image" ? await raster(a.original!) : null;
-  const prepared = a.kind === "image" ? await raster(a.prepared!) : null;
+  const prepared = a.kind === "image" ? await raster(a.prepared!, true) : null;
   const text = a.kind === "text" ? a.text!.replace(/\r\n?/g, "\n").trim() : "";
   const sourceHash = sha(a.kind === "text" ? text : original!.bytes);
   const inputHash = sha(JSON.stringify({ action: "createImport", ...a }));
@@ -220,7 +242,7 @@ export async function createImport(actor: string, key: string, input: unknown) {
       ensure(restaurant, "请选择启用的餐馆");
       const previous = (
         await tx.query<{ id: string }>(
-          "SELECT id FROM import_drafts WHERE created_by=$1 AND restaurant_id=$2 AND delivery_date=$3::date AND source_hash=$4 AND status<>'confirmed' ORDER BY created_at DESC",
+          "SELECT id FROM import_drafts WHERE created_by=$1 AND restaurant_id=$2 AND delivery_date=$3::date AND source_hash=$4 AND status<>'confirmed' AND deleted_at IS NULL ORDER BY created_at DESC",
           [actor, a.restaurantId, a.date, sourceHash],
         )
       ).rows;
@@ -237,11 +259,7 @@ export async function createImport(actor: string, key: string, input: unknown) {
       }
       const id = randomUUID();
       const lines =
-        a.kind === "text"
-          ? sourceLines(text).map((line, index) =>
-              blankLine(line.text, line.line, `line-${index + 1}`),
-            )
-          : [];
+        a.kind === "text" ? parseTextLocally(text, await catalogIn(tx)) : [];
       await tx.query(
         "INSERT INTO import_drafts(id,created_by,restaurant_id,delivery_date,source_kind,original_text,source_hash,lines) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
         [
@@ -280,8 +298,9 @@ export async function getDraft(actor: string, id: string) {
         )
       ).rows[0];
       if (
-        !active ||
-        Date.now() - new Date(active.started_at).getTime() > 70000
+        Date.now() -
+          new Date(active?.started_at ?? draft.updated_at).getTime() >
+        70000
       ) {
         await tx.query(
           "UPDATE extraction_attempts SET status='failed',error_code='interrupted',finished_at=now() WHERE draft_id=$1 AND status='pending'",
@@ -297,16 +316,58 @@ export async function getDraft(actor: string, id: string) {
     return draft;
   });
 }
-export async function listDrafts(actor: string, date: string) {
+export async function listDrafts(actor: string, date: string, deleted = false) {
   ensure(validDate(date), "日期无效");
   const db = await getDb();
   return (
     await db.query<DraftSummary>(
-      "SELECT d.id,r.name restaurant_name,d.delivery_date::text,d.source_kind,d.status,d.updated_at FROM import_drafts d JOIN restaurants r ON r.id=d.restaurant_id WHERE d.created_by=$1 AND d.delivery_date=$2::date AND d.status<>'confirmed' ORDER BY d.updated_at DESC LIMIT 100",
-      [actor, date],
+      "SELECT d.id,r.name restaurant_name,d.delivery_date::text,d.source_kind,d.status,d.updated_at,d.version FROM import_drafts d JOIN restaurants r ON r.id=d.restaurant_id WHERE d.created_by=$1 AND d.delivery_date=$2::date AND d.status<>'confirmed' AND (d.deleted_at IS NOT NULL)=$3 ORDER BY d.updated_at DESC LIMIT 100",
+      [actor, date, deleted],
     )
   ).rows;
 }
+export async function setDraftDeleted(
+  actor: string,
+  id: string,
+  key: string,
+  input: unknown,
+) {
+  const parsed = z
+    .object({ version: z.number().int().positive(), deleted: z.boolean() })
+    .strict()
+    .safeParse(input);
+  ensure(parsed.success, "删除请求无效，请重新读取草稿");
+  const db = await getDb();
+  return db.transaction((tx) =>
+    replay(
+      tx,
+      actor,
+      key,
+      sha(JSON.stringify({ action: "setDraftDeleted", id, ...parsed.data })),
+      async () => {
+        const draft = await draftRow(tx, actor, id, true);
+        editable(draft, parsed.data.version);
+        ensure(
+          Boolean(draft.deleted_at) !== parsed.data.deleted,
+          parsed.data.deleted ? "草稿已删除" : "草稿已恢复",
+          409,
+        );
+        await tx.query(
+          "UPDATE import_drafts SET deleted_at=CASE WHEN $1 THEN now() ELSE NULL END,preview=NULL,version=version+1,updated_at=now() WHERE id=$2",
+          [parsed.data.deleted, id],
+        );
+        await audit(
+          tx,
+          actor,
+          parsed.data.deleted ? "deleteDraft" : "restoreDraft",
+          id,
+        );
+        return { id };
+      },
+    ),
+  );
+}
+
 export async function imageForDraft(
   actor: string,
   id: string,
@@ -443,6 +504,8 @@ export async function extractDraft(
       privacyVersion: z.literal(PRIVACY_VERSION),
       redacted: z.literal(true),
       replaceExisting: z.boolean(),
+      scope: z.enum(["unresolved", "all"]).default("all"),
+      force: z.boolean().default(false),
     })
     .strict()
     .safeParse(input);
@@ -462,22 +525,170 @@ export async function extractDraft(
     }
     const draft = await draftRow(tx, actor, id);
     editable(draft, a.data.version);
+    const catalog = await catalogIn(tx);
+    let rulesChanged = false;
+    if (
+      draft.source_kind === "text" &&
+      a.data.scope === "unresolved" &&
+      draft.version === 1 &&
+      draft.status === "draft"
+    ) {
+      const local = parseTextLocally(draft.original_text, catalog);
+      draft.lines = draft.lines.map((line) => {
+        // Only untouched blank source rows from older drafts may be filled.
+        if (
+          line.reviewed ||
+          line.disposition !== "item" ||
+          line.productText ||
+          line.productId ||
+          line.quantity ||
+          line.unit ||
+          line.extractionIssues.length
+        )
+          return line;
+        if (
+          draft.lines.filter((other) => other.sourceLine === line.sourceLine)
+            .length !== 1
+        )
+          return line;
+        const parsed = local.find(
+          (candidate) =>
+            candidate.sourceLine === line.sourceLine &&
+            candidate.sourceText === line.sourceText,
+        );
+        if (
+          !parsed ||
+          (!parsed.productText && !parsed.quantity && !parsed.unit)
+        )
+          return line;
+        rulesChanged = true;
+        return { ...parsed, id: line.id };
+      });
+    }
+    const targets =
+      draft.source_kind === "text" && a.data.scope === "unresolved"
+        ? new Set(
+            draft.lines
+              .filter(
+                (l) =>
+                  !l.reviewed &&
+                  l.disposition !== "ignored" &&
+                  (lineProblems(l, catalog).length ||
+                    l.extractionIssues.length) &&
+                  !draft.lines.some(
+                    (other) =>
+                      other.sourceLine === l.sourceLine &&
+                      (other.reviewed || other.disposition === "ignored"),
+                  ),
+              )
+              .map((l) => l.sourceLine)
+              .filter((n) => n > 0),
+          )
+        : null;
+    if (targets && !targets.size) {
+      if (rulesChanged)
+        await tx.query(
+          "UPDATE import_drafts SET lines=$1,preview=NULL,version=version+1,updated_at=now() WHERE id=$2",
+          [JSON.stringify(draft.lines), id],
+        );
+      return { replayed: true as const };
+    }
     ensure(
-      a.data.replaceExisting ||
+      targets ||
+        a.data.replaceExisting ||
         !draft.lines.some(
           (l) => l.reviewed || l.productId || l.quantity || l.unit,
         ),
       "重新识别会替换审核项目，请明确确认后再试",
     );
     const config = extractionConfig();
-    if (!config.enabled) return { disabled: config.reason };
+    const image =
+      draft.source_kind === "image"
+        ? (
+            await tx.query<{
+              prepared_image: Uint8Array;
+              prepared_mime: string;
+            }>(
+              "SELECT prepared_image,prepared_mime FROM import_images WHERE draft_id=$1",
+              [id],
+            )
+          ).rows[0]
+        : null;
+    // Older saved drafts may still contain an oversized prepared image.
+    if (image) {
+      const raster = sharp(image.prepared_image, {
+        limitInputPixels: 24000000,
+      });
+      const meta = await raster.metadata();
+      let size;
+      try {
+        size = preparedImageSize(meta.width!, meta.height!);
+      } catch {
+        throw new AppError(
+          "截图太长，缩小后文字难以辨认，请裁剪或分成多张截图",
+        );
+      }
+      if (size.width !== meta.width || size.height !== meta.height) {
+        image.prepared_image = await raster
+          .resize(size)
+          .jpeg({ quality: 94 })
+          .toBuffer();
+        image.prepared_mime = "image/jpeg";
+        await tx.query(
+          "UPDATE import_images SET prepared_image=$1,prepared_mime=$2 WHERE draft_id=$3",
+          [image.prepared_image, image.prepared_mime, id],
+        );
+      }
+    }
+    // Blank excluded lines to retain original physical line numbers.
+    const providerInput: ExtractionInput =
+      draft.source_kind === "text"
+        ? {
+            kind: "text",
+            text: targets
+              ? draft.original_text
+                  .split("\n")
+                  .map((line, i) => (targets.has(i + 1) ? line : ""))
+                  .join("\n")
+              : draft.original_text,
+          }
+        : {
+            kind: "image",
+            data: image!.prepared_image,
+            mimeType: image!.prepared_mime,
+          };
+    const cacheKey = sha(
+      JSON.stringify([
+        actor,
+        provider.name,
+        config.model,
+        PROMPT_VERSION,
+        SCHEMA_VERSION,
+        providerInput.kind === "text"
+          ? providerInput.text
+          : [providerInput.mimeType, sha(providerInput.data)],
+      ]),
+    );
+    const cached = !a.data.force
+      ? (
+          await tx.query<{ result: unknown }>(
+            "SELECT result FROM extraction_cache WHERE cache_key=$1 AND actor_id=$2",
+            [cacheKey, actor],
+          )
+        ).rows[0]
+      : null;
+    const cachedResult = cached
+      ? extractionSchema.safeParse(cached.result)
+      : null;
+    const cache = cachedResult?.success ? cachedResult.data : null;
+    if (!cache && !config.enabled) return { disabled: config.reason };
     const cooldown = (
       await tx.query<{ until_at: Date }>(
         "SELECT until_at FROM extraction_cooldown WHERE id=1 AND until_at>now()",
       )
     ).rows[0];
     ensure(
-      !cooldown,
+      cache || !cooldown,
       "Gemini 正在冷却，请稍后重试或直接手动审核。草稿已保留。",
       429,
     );
@@ -494,65 +705,55 @@ export async function extractDraft(
       )
     ).rows[0];
     ensure(
-      counts.minute_count < config.maxRpm,
+      cache || counts.minute_count < config.maxRpm,
       "已达到本店每分钟识别上限，请稍后重试或手动审核。",
       429,
     );
     ensure(
-      counts.day_count < config.maxRpd,
+      cache || counts.day_count < config.maxRpd,
       "已达到本店今日识别上限，请使用手动审核。不会启用付费服务。",
       429,
     );
     const attemptId = randomUUID();
+    if (!cache)
+      await tx.query(
+        "INSERT INTO extraction_attempts(id,draft_id,actor_id,request_key,provider,model,prompt_version,schema_version,quota_day) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        [
+          attemptId,
+          id,
+          actor,
+          key,
+          provider.name,
+          config.model,
+          PROMPT_VERSION,
+          SCHEMA_VERSION,
+          quotaDay,
+        ],
+      );
     await tx.query(
-      "INSERT INTO extraction_attempts(id,draft_id,actor_id,request_key,provider,model,prompt_version,schema_version,quota_day) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-      [
-        attemptId,
-        id,
-        actor,
-        key,
-        provider.name,
-        config.model,
-        PROMPT_VERSION,
-        SCHEMA_VERSION,
-        quotaDay,
-      ],
-    );
-    await tx.query(
-      "UPDATE import_drafts SET status='extracting',error_message=NULL,preview=NULL,version=version+1,updated_at=now() WHERE id=$1",
-      [id],
+      "UPDATE import_drafts SET status='extracting',lines=$2,error_message=NULL,preview=NULL,version=version+1,updated_at=now() WHERE id=$1",
+      [id, JSON.stringify(draft.lines)],
     );
     await audit(tx, actor, "geminiConsent", id, {
       privacyVersion: PRIVACY_VERSION,
       redacted: true,
       model: config.model,
     });
-    const image =
-      draft.source_kind === "image"
-        ? (
-            await tx.query<{
-              prepared_image: Uint8Array;
-              prepared_mime: string;
-            }>(
-              "SELECT prepared_image,prepared_mime FROM import_images WHERE draft_id=$1",
-              [id],
-            )
-          ).rows[0]
-        : null;
-    return { draft, attemptId, reservedVersion: draft.version + 1, image };
+    return {
+      draft,
+      attemptId: cache ? null : attemptId,
+      reservedVersion: draft.version + 1,
+      providerInput,
+      cache,
+      cacheKey,
+      targets,
+    };
   });
   if ("replayed" in reservation) return { id, replayed: true };
   if ("disabled" in reservation) throw new AppError(reservation.disabled!, 503);
   try {
-    const raw = await provider.extract(
-      reservation.draft.source_kind === "text"
-        ? { kind: "text", text: reservation.draft.original_text }
-        : {
-            kind: "image",
-            data: reservation.image!.prepared_image,
-            mimeType: reservation.image!.prepared_mime,
-          },
-    );
+    const raw =
+      reservation.cache ?? (await provider.extract(reservation.providerInput));
     const parsed = extractionSchema.safeParse(raw);
     if (!parsed.success || !parsed.data.lines.length)
       throw new ExtractionFailure(
@@ -568,13 +769,24 @@ export async function extractDraft(
         409,
       );
       const catalog = await catalogIn(tx);
-      const lines = buildReview(
+      let lines = buildReview(
         parsed.data,
         reservation.draft.source_kind === "text"
           ? reservation.draft.original_text
           : null,
         catalog,
       );
+      if (reservation.targets) {
+        const replacements = lines
+          .filter((l) => reservation.targets!.has(l.sourceLine))
+          .map((l) => ({ ...l, id: `ai-${randomUUID()}` }));
+        lines = [
+          ...current.lines.filter(
+            (l) => !reservation.targets!.has(l.sourceLine),
+          ),
+          ...replacements,
+        ].sort((a, b) => (a.sourceLine || 201) - (b.sourceLine || 201));
+      }
       ensure(
         lines.length > 0 && lines.length <= 200,
         "识别项目太多或没有可读内容，请手动处理",
@@ -599,11 +811,16 @@ export async function extractDraft(
         [JSON.stringify(lines), detected, warning, id],
       );
       await tx.query(
-        "UPDATE extraction_attempts SET status='succeeded',finished_at=now() WHERE id=$1",
-        [reservation.attemptId],
+        "INSERT INTO extraction_cache(cache_key,actor_id,result) VALUES($1,$2,$3) ON CONFLICT(cache_key) DO UPDATE SET result=excluded.result,created_at=now()",
+        [reservation.cacheKey, actor, JSON.stringify(parsed.data)],
       );
+      if (reservation.attemptId)
+        await tx.query(
+          "UPDATE extraction_attempts SET status='succeeded',finished_at=now() WHERE id=$1",
+          [reservation.attemptId],
+        );
     });
-    return { id, replayed: false };
+    return { id, replayed: false, cached: !!reservation.cache };
   } catch (error) {
     const failure =
       error instanceof ExtractionFailure
@@ -613,10 +830,11 @@ export async function extractDraft(
             "interrupted",
           );
     await db.transaction(async (tx) => {
-      await tx.query(
-        "UPDATE extraction_attempts SET status='failed',error_code=$1,finished_at=now() WHERE id=$2",
-        [failure.code, reservation.attemptId],
-      );
+      if (reservation.attemptId)
+        await tx.query(
+          "UPDATE extraction_attempts SET status='failed',error_code=$1,finished_at=now() WHERE id=$2",
+          [failure.code, reservation.attemptId],
+        );
       await tx.query(
         "UPDATE import_drafts SET status='failed',error_message=$1,version=version+1,updated_at=now() WHERE id=$2 AND version=$3 AND status='extracting'",
         [failure.message, id, reservation.reservedVersion],
@@ -659,7 +877,7 @@ async function plan(
   ensure(restaurant, "餐馆已停用");
   const existing = (
     await tx.query<Order>(
-      "SELECT *,delivery_date::text AS delivery_date FROM orders WHERE restaurant_id=$1 AND delivery_date=$2::date",
+      "SELECT *,delivery_date::text AS delivery_date FROM orders WHERE restaurant_id=$1 AND delivery_date=$2::date AND deleted_at IS NULL",
       [draft.restaurant_id, draft.delivery_date],
     )
   ).rows[0];
@@ -738,7 +956,12 @@ async function plan(
         quantity: quantity(line.quantity),
         unit: line.unit as Unit,
         billingUnit: rule.billingUnit,
-        price: rule.price,
+        price: await resolvePrice(
+          tx,
+          draft.restaurant_id,
+          p.id,
+          rule.billingUnit,
+        ),
         existingItemId: null,
         sourceLineIds: [line.id],
         changesQuantity: false,

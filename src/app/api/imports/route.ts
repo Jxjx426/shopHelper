@@ -14,6 +14,11 @@ export async function GET(request: NextRequest) {
         request.nextUrl.searchParams.get("date") ?? todayMalaysia(),
       ),
       config: extractionConfig(),
+      deletedDrafts: await listDrafts(
+        user.id,
+        request.nextUrl.searchParams.get("date") ?? todayMalaysia(),
+        true,
+      ),
     });
   } catch (error) {
     return failure(error);

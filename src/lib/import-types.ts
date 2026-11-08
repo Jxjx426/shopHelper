@@ -37,6 +37,7 @@ export type ImportDraft = {
   version: number;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
   confirmed_order_id: string | null;
   original_mime: string | null;
   prepared_mime: string | null;
@@ -50,6 +51,7 @@ export type DraftSummary = Pick<
   | "source_kind"
   | "status"
   | "updated_at"
+  | "version"
 >;
 export type ImportConfig = {
   enabled: boolean;

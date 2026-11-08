@@ -15,6 +15,7 @@ import {
   imageForDraft,
   listDrafts,
   supplementDraft,
+  setDraftDeleted,
 } from "../src/lib/imports.server";
 import {
   PRIVACY_VERSION,
@@ -25,7 +26,7 @@ import {
   ExtractionFailure,
   type OrderExtractionProvider,
 } from "../src/lib/gemini.server";
-import type { ExtractionResult } from "../src/lib/extraction";
+import { blankLine, type ExtractionResult } from "../src/lib/extraction";
 const actor = randomUUID(),
   stranger = randomUUID();
 let zone: string, product: string, japanese: string, box: string;
@@ -195,6 +196,7 @@ async function extract(d: ImportDraft, provider = mock(), key = randomUUID()) {
       privacyVersion: PRIVACY_VERSION,
       redacted: true,
       replaceExisting: true,
+      force: true,
     },
     provider,
   );
@@ -314,7 +316,7 @@ test("request replay never repeats extraction, and invalid output never creates 
   const failed = await extract(other, invalid);
   assert.equal(failed.status, "failed");
   assert.equal(failed.lines[0].sourceText, "Timun 2kg");
-  assert.equal(failed.lines[0].productId, "");
+  assert.equal(failed.lines[0].productId, other.lines[0].productId);
 });
 test("provider failures preserve manual corrections and source; explicit manual fallback can still confirm", async () => {
   let d = await reviewed(await draft());
@@ -630,6 +632,60 @@ test("quota failures set a persistent cooldown and never auto-retry or discard t
   await assert.rejects(extract(failed, provider), /冷却/);
   assert.equal(calls, 1);
 });
+
+test("server downsizes prepared screenshots and preserves full original pixels", async () => {
+  const image = await sharp({
+    create: { width: 3200, height: 6000, channels: 3, background: "white" },
+  })
+    .png()
+    .toBuffer();
+  const payload = { mime: "image/png", base64: image.toString("base64") };
+  const created = await createImport(actor, randomUUID(), {
+    restaurantId: await restaurant(),
+    date,
+    kind: "image",
+    original: payload,
+    prepared: payload,
+  });
+  const original = await sharp(
+    (await imageForDraft(actor, created.id, false)).bytes,
+  ).metadata();
+  const prepared = await sharp(
+    (await imageForDraft(actor, created.id, true)).bytes,
+  ).metadata();
+  assert.equal(original.width, 3200);
+  assert.equal(original.height, 6000);
+  assert.equal(prepared.width, 1600);
+  assert.equal(prepared.height, 3000);
+  assert.equal(prepared.format, "jpeg");
+  // Simulate a draft saved before resizing was introduced.
+  await (
+    await getDb()
+  ).query(
+    "UPDATE import_images SET prepared_image=$1,prepared_mime='image/png' WHERE draft_id=$2",
+    [image, created.id],
+  );
+  await extract(await getDraft(actor, created.id), {
+    name: "legacy-image-fixture",
+    extract: async (input) => {
+      assert.equal(input.kind, "image");
+      if (input.kind === "image") {
+        const meta = await sharp(input.data).metadata();
+        assert.equal(meta.width, 1600);
+        assert.equal(meta.height, 3000);
+      }
+      return raw();
+    },
+  });
+  assert.equal(
+    (
+      await sharp(
+        (await imageForDraft(actor, created.id, false)).bytes,
+      ).metadata()
+    ).width,
+    3200,
+  );
+});
 test("drafts, screenshots, attempts and reviewed corrections survive database reopening", async () => {
   const d = await reviewed(await draft());
   const db = await getDb();
@@ -690,6 +746,224 @@ test("simultaneous extraction attempts cannot issue two requests for the same re
   await first;
   assert.equal(calls, 1);
 });
+test("straightforward text needs no provider, while unresolved-only extraction preserves resolved rows", async () => {
+  let calls = 0;
+  const input = {
+    privacyVersion: PRIVACY_VERSION,
+    redacted: true,
+    replaceExisting: false,
+    scope: "unresolved",
+  };
+  const d = await draft();
+  await extractDraft(
+    actor,
+    d.id,
+    randomUUID(),
+    { ...input, version: d.version },
+    mock(raw(), () => calls++),
+  );
+  assert.equal(calls, 0);
+  assert.equal((await getDraft(actor, d.id)).version, d.version);
+  const mixed = await draft("Timun 2kg\n青龙菜1.");
+  const provider: OrderExtractionProvider = {
+    name: "partial-fixture",
+    extract: async (value) => {
+      calls++;
+      assert.equal(value.kind, "text");
+      if (value.kind === "text") assert.equal(value.text, "\n青龙菜1.");
+      return {
+        detectedRestaurant: null,
+        unreadableContent: false,
+        lines: [
+          {
+            sourceLine: 2,
+            sourceText: "青龙菜1.",
+            productText: "青龙菜",
+            quantity: null,
+            unitText: null,
+            uncertain: true,
+          },
+        ],
+      };
+    },
+  };
+  await extractDraft(
+    actor,
+    mixed.id,
+    randomUUID(),
+    { ...input, version: mixed.version },
+    provider,
+  );
+  const next = await getDraft(actor, mixed.id);
+  assert.deepEqual(next.lines[0], mixed.lines[0]);
+  assert.equal(next.lines[1].quantity, "");
+  assert.equal(calls, 1);
+});
+
+test("saved extraction results survive reopening and bypass quota; changed input and explicit force do not reuse", async () => {
+  let calls = 0;
+  const provider = { ...mock(raw(), () => calls++), name: "cache-fixture" };
+  const input = {
+    privacyVersion: PRIVACY_VERSION,
+    redacted: true,
+    replaceExisting: true,
+    scope: "all",
+  };
+  const first = await draft();
+  await extractDraft(
+    actor,
+    first.id,
+    randomUUID(),
+    { ...input, version: first.version },
+    provider,
+  );
+  const db = await getDb();
+  await db.close();
+  globalThis.shopDatabase = undefined;
+  const second = await draft();
+  await (
+    await getDb()
+  ).query(
+    "INSERT INTO extraction_cooldown(id,until_at) VALUES(1,now()+interval '1 hour') ON CONFLICT(id) DO UPDATE SET until_at=excluded.until_at",
+  );
+  const reused = await extractDraft(
+    actor,
+    second.id,
+    randomUUID(),
+    { ...input, version: second.version },
+    provider,
+  );
+  assert.equal("cached" in reused && reused.cached, true);
+  assert.equal(calls, 1);
+  const refreshed = await getDraft(actor, second.id);
+  await assert.rejects(
+    extractDraft(
+      actor,
+      second.id,
+      randomUUID(),
+      { ...input, version: refreshed.version, force: true },
+      provider,
+    ),
+    /冷却/,
+  );
+  const changed = await draft("Timun 3kg");
+  await assert.rejects(
+    extractDraft(
+      actor,
+      changed.id,
+      randomUUID(),
+      { ...input, version: changed.version },
+      provider,
+    ),
+    /冷却/,
+  );
+  await (await getDb()).query("DELETE FROM extraction_cooldown");
+  await extractDraft(
+    actor,
+    second.id,
+    randomUUID(),
+    { ...input, version: refreshed.version, force: true },
+    provider,
+  );
+  assert.equal(calls, 2);
+});
+
+test("older untouched text drafts also use rules before Gemini and preserve manual corrections", async () => {
+  const d = await draft("Timun 2kg\nCarrot 1箱");
+  const manual = { ...d.lines[1], quantity: "3", matchedBy: "manual" as const };
+  await (
+    await getDb()
+  ).query("UPDATE import_drafts SET lines=$1 WHERE id=$2", [
+    JSON.stringify([blankLine("Timun 2kg", 1, d.lines[0].id), manual]),
+    d.id,
+  ]);
+  let calls = 0;
+  await extractDraft(
+    actor,
+    d.id,
+    randomUUID(),
+    {
+      version: d.version,
+      privacyVersion: PRIVACY_VERSION,
+      redacted: true,
+      replaceExisting: false,
+      scope: "unresolved",
+    },
+    mock(raw(), () => calls++),
+  );
+  const next = await getDraft(actor, d.id);
+  assert.equal(calls, 0);
+  assert.equal(next.lines[0].productId, product);
+  assert.equal(next.lines[0].quantity, "2");
+  assert.equal(next.lines[0].reviewed, false);
+  assert.deepEqual(next.lines[1], manual);
+});
+
+test("draft deletion is recoverable, owner-only and versioned; source and orders are preserved", async () => {
+  const d = await draft("Timun 2kg");
+  const key = randomUUID();
+  await assert.rejects(
+    setDraftDeleted(stranger, d.id, key, { version: d.version, deleted: true }),
+    /不存在/,
+  );
+  await assert.rejects(
+    setDraftDeleted(actor, d.id, key, {
+      version: d.version + 1,
+      deleted: true,
+    }),
+    /草稿已更新/,
+  );
+  await setDraftDeleted(actor, d.id, key, {
+    version: d.version,
+    deleted: true,
+  });
+  await setDraftDeleted(actor, d.id, key, {
+    version: d.version,
+    deleted: true,
+  });
+  assert(!(await listDrafts(actor, date)).some((row) => row.id === d.id));
+  const deleted = (await listDrafts(actor, date, true)).find(
+    (row) => row.id === d.id,
+  )!;
+  assert(deleted);
+  await assert.rejects(getDraft(actor, d.id), /草稿已删除/);
+  const replacement = await draft("Timun 2kg", d.restaurant_id);
+  assert.notEqual(replacement.id, d.id);
+  await setDraftDeleted(actor, d.id, randomUUID(), {
+    version: deleted.version,
+    deleted: false,
+  });
+  const restored = await getDraft(actor, d.id);
+  assert.equal(restored.original_text, d.original_text);
+  assert.deepEqual(restored.lines, d.lines);
+  const ready = await reviewed(restored);
+  const confirmed = await confirm(ready);
+  const after = await getDraft(actor, d.id);
+  await assert.rejects(
+    setDraftDeleted(actor, d.id, randomUUID(), {
+      version: after.version,
+      deleted: true,
+    }),
+    /已确认/,
+  );
+  assert(
+    (await workspace(date)).orders.some((order) => order.id === confirmed.id),
+  );
+  const extracting = await draft();
+  await (
+    await getDb()
+  ).query("UPDATE import_drafts SET status='extracting' WHERE id=$1", [
+    extracting.id,
+  ]);
+  await assert.rejects(
+    setDraftDeleted(actor, extracting.id, randomUUID(), {
+      version: extracting.version,
+      deleted: true,
+    }),
+    /正在识别/,
+  );
+});
+
 test("conflicting alias creation fails atomically without creating an order", async () => {
   const d = await reviewed(await draft("Gobis 2kg"), {
     productText: "Gobis",

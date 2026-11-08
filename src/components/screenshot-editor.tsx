@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Crop, Shield, RotateCcw } from "lucide-react";
 import { MAX_IMAGE_BYTES } from "@/lib/import-types";
+import { preparedImageSize } from "@/lib/image-limits";
 import { ErrorText } from "./ui";
 export type ImagePayload = {
   mime: "image/png" | "image/jpeg" | "image/webp";
@@ -78,8 +79,9 @@ export default function ScreenshotEditor({
         height: source.naturalHeight,
       };
       const output = document.createElement("canvas");
-      output.width = Math.round(selection.width);
-      output.height = Math.round(selection.height);
+      const size = preparedImageSize(selection.width, selection.height);
+      output.width = size.width;
+      output.height = size.height;
       const ctx = output.getContext("2d")!;
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, output.width, output.height);
@@ -97,12 +99,12 @@ export default function ScreenshotEditor({
       ctx.fillStyle = "#000";
       for (const mask of masks)
         ctx.fillRect(
-          mask.x - selection.x,
-          mask.y - selection.y,
-          mask.width,
-          mask.height,
+          ((mask.x - selection.x) * output.width) / selection.width,
+          ((mask.y - selection.y) * output.height) / selection.height,
+          (mask.width * output.width) / selection.width,
+          (mask.height * output.height) / selection.height,
         );
-      const base64 = output.toDataURL("image/jpeg", 0.97).split(",")[1];
+      const base64 = output.toDataURL("image/jpeg", 0.94).split(",")[1];
       if (base64.length * 0.75 > MAX_IMAGE_BYTES) {
         setError("处理后的图片超过5MB，请裁剪成较小截图");
         callback.current(null);
@@ -113,8 +115,12 @@ export default function ScreenshotEditor({
         prepared: { mime: "image/jpeg", base64 },
       });
       setError("");
-    } catch {
-      setError("图片处理失败，请换一张较小截图");
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "图片处理失败，请换一张较小截图",
+      );
       callback.current(null);
     }
   }, [crop, masks, imageVersion]);

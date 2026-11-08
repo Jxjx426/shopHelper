@@ -89,7 +89,9 @@ assert.equal(
 assert.equal((await call("/api/imports", createBody)).value.id, created.id);
 let draft = (await call(`/api/imports/${created.id}`)).value;
 assert.equal(draft.lines.length, 4);
-assert(draft.lines.every((l) => !l.reviewed && l.unit === ""));
+assert(draft.lines.every((l) => !l.reviewed));
+assert.equal(draft.lines[1].unit, "kg");
+assert.equal(draft.lines[2].quantity, "");
 await call(
   `/api/imports/${draft.id}`,
   {
@@ -108,7 +110,7 @@ await call(
     version: draft.version,
     privacyVersion: "gemini-unpaid-2026-11-v1",
     redacted: true,
-    replaceExisting: false,
+    replaceExisting: true,
   },
   503,
 );
@@ -299,7 +301,7 @@ const sp = (
 assert.equal(sp.lines[0].price, "6.00");
 // Leave this screenshot draft unconfirmed for interactive review QA.
 const backup = (await call("/api/backup")).value;
-assert.equal(backup.schemaVersion, 2);
+assert.equal(backup.schemaVersion, 3);
 assert(backup.tables.import_images.length > 0);
 assert(!JSON.stringify(backup).includes("GEMINI_API_KEY"));
 await call("/api/imports?date=2026-11-08", undefined, 401, randomUUID(), false);

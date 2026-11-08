@@ -3,7 +3,11 @@ import {
   EXTRACTION_JSON_SCHEMA,
   type ExtractionResult,
 } from "./extraction";
-import type { ImportConfig } from "./import-types";
+import {
+  MAX_IMAGE_BYTES,
+  MAX_TEXT_LENGTH,
+  type ImportConfig,
+} from "./import-types";
 
 if (typeof window !== "undefined")
   throw new Error("Server-only extraction provider");
@@ -58,6 +62,17 @@ export class GeminiExtractionProvider implements OrderExtractionProvider {
   readonly name = "gemini";
   constructor(private transport: typeof fetch = fetch) {}
   async extract(input: ExtractionInput): Promise<ExtractionResult> {
+    if (
+      input.kind === "text"
+        ? input.text.length > MAX_TEXT_LENGTH ||
+          input.text.split(/\r\n?|\n/).length > 200
+        : input.data.length > MAX_IMAGE_BYTES * 2 ||
+          !["image/jpeg", "image/png", "image/webp"].includes(input.mimeType)
+    )
+      throw new ExtractionFailure(
+        "内容超过识别限制，请拆分或手动审核。草稿已保留。",
+        "input_limit",
+      );
     const config = extractionConfig();
     if (!config.enabled)
       throw new ExtractionFailure(config.reason, "configuration");
@@ -104,7 +119,18 @@ export class GeminiExtractionProvider implements OrderExtractionProvider {
             generationConfig: {
               responseMimeType: "application/json",
               responseJsonSchema: EXTRACTION_JSON_SCHEMA,
-              maxOutputTokens: 16384,
+              maxOutputTokens:
+                input.kind === "text"
+                  ? Math.min(
+                      16384,
+                      Math.max(
+                        2048,
+                        input.text.split("\n").filter((l) => l.trim()).length *
+                          160 +
+                          768,
+                      ),
+                    )
+                  : 16384,
               temperature: 0,
             },
           }),

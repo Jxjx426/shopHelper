@@ -47,16 +47,16 @@
 }
 .draft-import-row strong {
   display: block;
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale));
   overflow-wrap: anywhere;
 }
 .draft-import-row small {
   display: block;
   color: var(--muted);
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
 }
 .draft-import-row > .text-button {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   flex-shrink: 0;
 }
 .import-kind {
@@ -75,7 +75,7 @@
 }
 .import-source-bar .secondary {
   padding: 10px 13px;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .original-text {
   white-space: pre-wrap;
@@ -86,7 +86,7 @@
   max-height: 60vh;
   overflow: auto;
   font: inherit;
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale));
   margin: 0 0 20px;
 }
 .source-image {
@@ -111,7 +111,7 @@
   min-height: 48px;
   display: list-item;
   align-content: center;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 650;
   color: var(--green);
   list-style-position: inside;
@@ -130,13 +130,13 @@
   margin-top: 5px;
 }
 .privacy-notice p {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   line-height: 1.85;
   color: #536a4c;
   margin-top: 9px;
 }
 .privacy-notice a {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   text-decoration: underline;
   display: inline-flex;
   align-items: center;
@@ -145,14 +145,14 @@
 }
 .ai-extraction .check-line {
   margin: 12px 0;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   align-items: flex-start;
 }
 .ai-extraction input[type="checkbox"] {
   margin-top: 4px;
 }
 .ai-extraction > .primary {
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
 }
 .review-line {
   border: 1px solid #d6dfce;
@@ -170,7 +170,7 @@
   margin-bottom: 12px;
 }
 .review-line .card-heading strong {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .source-line {
   margin: 10px 0 15px;
@@ -179,7 +179,7 @@
   padding: 12px 13px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale));
   color: #435b3e;
   border-left: 0;
 }
@@ -188,7 +188,7 @@
   background: #fff5e6;
   border-radius: 8px;
   margin: 10px 0;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: #885716;
 }
 .review-warnings p + p {
@@ -206,7 +206,7 @@
   min-height: 48px;
   background: #fff;
   color: var(--muted);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   flex: 1;
 }
 .review-disposition button.selected {
@@ -216,14 +216,14 @@
   font-weight: 650;
 }
 .review-problems {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: #9a5c1b;
   margin: 12px 0;
 }
 .review-line > .primary,
 .review-line > .secondary {
   margin-top: 11px;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
 }
 .review-line .field {
   margin-bottom: 13px;
@@ -236,10 +236,10 @@
   margin: 13px 0 0;
 }
 .alias-details summary {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
 }
 .alias-details .check-line {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   align-items: flex-start;
 }
 .manual-import-actions {
@@ -250,7 +250,7 @@
 }
 .manual-import-actions button {
   flex: 1;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .review-final-check {
   margin: 24px 0 15px;
@@ -260,7 +260,7 @@
 .review-final-check .check-line {
   align-items: flex-start;
   margin: 18px 0;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
 }
 .review-final-check .check-line input {
   margin-top: 5px;
@@ -279,18 +279,18 @@
   padding: 16px 0;
 }
 .preview-import-line strong {
-  font-size: 19px;
+  font-size: calc(19px * var(--font-scale));
   overflow-wrap: anywhere;
 }
 .preview-import-line > span {
-  font-size: 21px;
+  font-size: calc(21px * var(--font-scale));
   font-weight: 700;
   color: var(--green);
 }
 .preview-import-line small {
   grid-column: 1/-1;
   color: var(--muted);
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
 }
 .upload-control {
   display: flex;
@@ -323,7 +323,7 @@
 .image-tools button {
   flex: 1;
   min-width: 90px;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   padding: 10px;
 }
 .canvas-frame {
@@ -352,7 +352,7 @@
   }
   .order-entry-actions button {
     flex: 1;
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
   }
   .draft-imports {
     padding: 17px;
@@ -361,7 +361,7 @@
     gap: 8px;
   }
   .draft-import-row > .text-button {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
   }
   .draft-import-row > svg {
     width: 20px;
@@ -376,16 +376,16 @@
     width: 19px;
   }
   .privacy-notice p {
-    font-size: 15px;
+    font-size: calc(16px * var(--font-scale));
   }
   .review-line {
     padding: 15px 12px;
   }
   .review-line .card-heading strong {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
   }
   .review-line .tag {
-    font-size: 12px;
+    font-size: calc(16px * var(--font-scale));
   }
   .review-disposition button {
     padding: 10px 8px;
@@ -394,17 +394,17 @@
     gap: 8px;
   }
   .manual-import-actions button {
-    font-size: 15px;
+    font-size: calc(16px * var(--font-scale));
     padding: 11px 9px;
   }
   .import-source-bar .text-button {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
   }
   .preview-import-line strong {
-    font-size: 18px;
+    font-size: calc(18px * var(--font-scale));
   }
   .preview-import-line > span {
-    font-size: 20px;
+    font-size: calc(20px * var(--font-scale));
   }
   .canvas-frame {
     padding: 6px;
