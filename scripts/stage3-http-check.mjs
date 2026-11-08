@@ -141,6 +141,7 @@ await action({
   action: "setUnavailable",
   id: item.id,
   version: item.version,
+  taskVersion: item.task_version,
   unavailable: true,
 });
 preview = (await call(`/api/orders/${orderId}/document`)).value;
@@ -183,7 +184,11 @@ await action({
   productId: product.id,
   billingUnit: "kg",
   price: "7.00",
-  expectedVersion: 1,
+  expectedVersion: (
+    await call(`/api/workspace?date=${date}`)
+  ).value.restaurantPrices.find(
+    (p) => p.restaurant_id === restaurantId && p.product_id === product.id,
+  ).version,
 });
 assert.equal(
   createHash("sha256")

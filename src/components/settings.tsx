@@ -31,6 +31,8 @@ import type { ViewProps } from "./types";
 import { FontSetting, type FontSize } from "./font-setting";
 import { RestaurantPrices, ThresholdSettings } from "./billing-settings";
 import BackupRestore from "./backup-restore";
+import StaffSettings from "./staff-settings";
+import { allowed } from "@/lib/permissions";
 const splitAliases = (value: string) => [
   ...new Set(
     value
@@ -418,11 +420,12 @@ export default function ShopSettings(
 ) {
   const { data, mutate, busy } = props;
   const [section, setSection] = useState<
-    "products" | "zones" | "restaurants" | "shop" | "prices"
+    "products" | "zones" | "restaurants" | "shop" | "prices" | "staff"
   >("products");
   const [editor, setEditor] = useState<Editor | null>(null);
   const [filter, setFilter] = useState("");
   const [shopName, setShopName] = useState(data.shop.name);
+  const [shopVersion, setShopVersion] = useState(data.shop.version);
   const [backupError, setBackupError] = useState("");
   const [exporting, setExporting] = useState(false);
   const settingsTabs = [
@@ -441,6 +444,7 @@ export default function ShopSettings(
     },
     { id: "shop", label: "店铺", icon: Settings, count: undefined },
     { id: "prices", label: "餐馆专价", icon: Store, count: undefined },
+    { id: "staff", label: "员工账号", icon: ShieldCheck, count: undefined },
   ] as const;
   async function downloadBackup() {
     setExporting(true);
@@ -472,6 +476,20 @@ export default function ShopSettings(
       n.toLowerCase().includes(filter.toLowerCase()),
     ),
   );
+  if (!allowed(data.user, "manage"))
+    return (
+      <>
+        <h1>设置</h1>
+        <FontSetting fontSize={props.fontSize} onFontSize={props.onFontSize} />
+        <section className="panel">
+          <h2>{data.user?.name}</h2>
+          <p>员工账号 · 可配货及称重</p>
+          <button className="secondary" onClick={() => void props.onLogout()}>
+            退出账号
+          </button>
+        </section>
+      </>
+    );
   return (
     <>
       <div className="page-heading">
@@ -503,7 +521,9 @@ export default function ShopSettings(
           </button>
         ))}
       </div>
-      {section === "prices" ? (
+      {section === "staff" ? (
+        <StaffSettings {...props} />
+      ) : section === "prices" ? (
         <RestaurantPrices {...props} />
       ) : section === "products" ? (
         <>
@@ -781,10 +801,17 @@ export default function ShopSettings(
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                await mutate(
-                  { action: "saveShop", name: shopName },
-                  "店名已保存",
-                );
+                if (
+                  await mutate(
+                    {
+                      action: "saveShop",
+                      name: shopName,
+                      version: shopVersion,
+                    },
+                    "店名已保存",
+                  )
+                )
+                  setShopVersion((v) => v + 1);
               }}
             >
               <Field label="店名">
@@ -810,7 +837,7 @@ export default function ShopSettings(
             </div>
             <div className="setting-detail">
               <span>访问方式</span>
-              <strong>单店主账号</strong>
+              <strong>独立员工账号 · 共享店铺</strong>
             </div>
             <button
               className="text-button"

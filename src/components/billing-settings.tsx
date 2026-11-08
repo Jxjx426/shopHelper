@@ -6,16 +6,20 @@ import { Field, Modal, ErrorText } from "./ui";
 export function ThresholdSettings({ data, mutate, busy, error }: ViewProps) {
   const [small, setSmall] = useState(data.shop.small_weight_percent);
   const [large, setLarge] = useState(data.shop.large_weight_percent);
+  const [version, setVersion] = useState(data.shop.version);
   return (
     <section className="panel">
       <h2>重量差异阈值</h2>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
-          await mutate(
-            { action: "saveThresholds", small, large },
-            "差异阈值已保存",
-          );
+          if (
+            await mutate(
+              { action: "saveThresholds", small, large, version },
+              "差异阈值已保存",
+            )
+          )
+            setVersion((v) => v + 1);
         }}
       >
         <div className="two-columns">
@@ -40,6 +44,19 @@ export function ThresholdSettings({ data, mutate, busy, error }: ViewProps) {
           超过阈值才警告；修改阈值后，未定稿订单会重新核对。
         </p>
         <ErrorText message={error} />
+        {version !== data.shop.version && (
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              setSmall(data.shop.small_weight_percent);
+              setLarge(data.shop.large_weight_percent);
+              setVersion(data.shop.version);
+            }}
+          >
+            读取最新设置
+          </button>
+        )}
         <button className="primary" disabled={busy}>
           保存阈值
         </button>

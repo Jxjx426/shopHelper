@@ -41,7 +41,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
           <input
             type="checkbox"
             checked={item.picking_state === "picked"}
-            disabled={busy || item.unavailable}
+            disabled={busy || item.unavailable || !!order.finalized_document_id}
             aria-label={`${order.restaurant_name} ${item.product_name} ${Number(item.ordered_quantity)} ${item.ordered_unit} 配货`}
             onChange={(e) =>
               void mutate(
@@ -61,6 +61,9 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
             <strong>
               {view === "zone" ? order.restaurant_name : item.product_name}
             </strong>
+            {item.last_changed_by && (
+              <span className="pick-subtext">{item.last_changed_by}</span>
+            )}
             {(item.unavailable || order.urgent) && (
               <span className="pick-subtext">
                 {item.unavailable && "缺货"}
@@ -80,7 +83,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
           </strong>
           <button
             className="text-button"
-            disabled={busy}
+            disabled={busy || !!order.finalized_document_id}
             onClick={() =>
               item.unavailable
                 ? void mutate(
@@ -88,6 +91,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
                       action: "setUnavailable",
                       id: item.id,
                       version: item.version,
+                      taskVersion: item.task_version,
                       unavailable: false,
                     },
                     "已取消缺货，请重新配货和确认实供",
@@ -327,6 +331,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
                       action: "setUnavailable",
                       id: unavailable.item.id,
                       version: unavailable.item.version,
+                      taskVersion: unavailable.item.task_version,
                       unavailable: true,
                     },
                     "已确认缺货，金额为 RM 0.00",

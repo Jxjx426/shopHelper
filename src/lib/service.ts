@@ -26,6 +26,8 @@ import {
 } from "./domain";
 
 import { AppError } from "./errors";
+import { requirePermission, actionPermission } from "./permissions.server";
+import { saveStaff, userActionSchema } from "./users.server";
 export { AppError } from "./errors";
 const id = z.string().min(1).max(100);
 const name = z.string().trim().min(1, "名称不能为空").max(80, "名称最多80个字");
@@ -35,9 +37,11 @@ const aliases = z.array(z.string().trim().min(1).max(80)).max(60).default([]);
 const date = z.string().refine(validDate, "请选择有效日期");
 const amount = z.string().max(30);
 const schemas = [
-  z.object({ action: z.literal("saveShop"), name }),
+  userActionSchema,
+  z.object({ action: z.literal("saveShop"), name, version }),
   z.object({
     action: z.literal("saveThresholds"),
+    version,
     small: z.string().regex(/^\d{1,3}(\.\d{1,2})?$/),
     large: z.string().regex(/^\d{1,3}(\.\d{1,2})?$/),
   }),
@@ -134,6 +138,7 @@ const schemas = [
     action: z.literal("setUnavailable"),
     id,
     version,
+    taskVersion: version,
     unavailable: z.boolean(),
   }),
   z.object({
@@ -202,7 +207,7 @@ export async function workspace(selectedDate: string): Promise<Workspace> {
   return db.transaction(async (tx) => {
     const shop = (
       await tx.query<Workspace["shop"]>(
-        "SELECT name,small_weight_percent::text,large_weight_percent::text FROM shop WHERE id=1",
+        "SELECT name,version,small_weight_percent::text,large_weight_percent::text FROM shop WHERE id=1",
       )
     ).rows[0];
     const zones = (
@@ -224,11 +229,16 @@ export async function workspace(selectedDate: string): Promise<Workspace> {
     ).rows;
     const items = (
       await tx.query<OrderItem>(
-        `SELECT i.*,t.state picking_state,t.version task_version FROM order_items i JOIN picking_tasks t ON t.order_item_id=i.id JOIN orders o ON o.id=i.order_id WHERE o.delivery_date=$1::date AND o.deleted_at IS NULL ORDER BY i.position,i.id`,
+        `SELECT i.*,t.state picking_state,t.version task_version,(SELECT u.name FROM change_records c JOIN users u ON u.id=c.actor_id WHERE c.entity_id=i.id ORDER BY c.created_at DESC,c.id DESC LIMIT 1) last_changed_by FROM order_items i JOIN picking_tasks t ON t.order_item_id=i.id JOIN orders o ON o.id=i.order_id WHERE o.delivery_date=$1::date AND o.deleted_at IS NULL ORDER BY i.position,i.id`,
         [selectedDate],
       )
     ).rows;
     return {
+      generation: (
+        await tx.query<{ generation: string }>(
+          "SELECT generation FROM app_state WHERE id=1",
+        )
+      ).rows[0].generation,
       shop,
       zones,
       restaurants,
@@ -252,16 +262,26 @@ export async function apply(
   actor: string,
   a: Action,
 ): Promise<{ id: string }> {
+  await requirePermission(tx, actor, actionPermission(a.action));
+  if (a.action === "saveStaff") return saveStaff(tx, actor, a);
   if (a.action === "finalizeOrder" || a.action === "reopenOrder")
     return applyDocument(tx, actor, a);
   if (a.action === "saveThresholds") {
     await requireOwner(tx, actor);
+    checkVersion(
+      (
+        await tx.query<{ version: number }>(
+          "SELECT version FROM shop WHERE id=1",
+        )
+      ).rows[0],
+      a.version,
+    );
     ensure(
       Number(a.small) <= 100 && Number(a.large) <= 100,
       "差异阈值须在 0 至 100% 之间",
     );
     await tx.query(
-      "UPDATE shop SET small_weight_percent=$1,large_weight_percent=$2 WHERE id=1",
+      "UPDATE shop SET small_weight_percent=$1,large_weight_percent=$2,version=version+1 WHERE id=1",
       [a.small, a.large],
     );
     await record(tx, actor, a.action, "1", { small: a.small, large: a.large });
@@ -298,7 +318,7 @@ export async function apply(
       );
     else
       await tx.query(
-        "INSERT INTO restaurant_prices(restaurant_id,product_id,billing_unit,amount) VALUES($1,$2,$3,$4) ON CONFLICT(restaurant_id,product_id,billing_unit) DO UPDATE SET amount=excluded.amount,version=restaurant_prices.version+1",
+        "INSERT INTO restaurant_prices(restaurant_id,product_id,billing_unit,amount,version) VALUES($1,$2,$3,$4,nextval('restaurant_price_version')) ON CONFLICT(restaurant_id,product_id,billing_unit) DO UPDATE SET amount=excluded.amount,version=nextval('restaurant_price_version')",
         [a.restaurantId, a.productId, a.billingUnit, value],
       );
     await record(tx, actor, a.action, a.restaurantId, {
@@ -368,7 +388,17 @@ export async function apply(
     return result;
   }
   if (a.action === "saveShop") {
-    await tx.query("UPDATE shop SET name=$1 WHERE id=1", [a.name]);
+    checkVersion(
+      (
+        await tx.query<{ version: number }>(
+          "SELECT version FROM shop WHERE id=1",
+        )
+      ).rows[0],
+      a.version,
+    );
+    await tx.query("UPDATE shop SET name=$1,version=version+1 WHERE id=1", [
+      a.name,
+    ]);
     await record(tx, actor, a.action, "1", { name: a.name });
     return { id: "1" };
   }
@@ -419,6 +449,7 @@ export async function apply(
         [current.sort_order, other.id],
       );
     }
+    await record(tx, actor, a.action, a.id, { direction: a.direction });
     return { id: a.id };
   }
   if (a.action === "saveRestaurant") {
@@ -628,6 +659,15 @@ export async function apply(
   }
   checkVersion(item, a.version);
   if (a.action === "setUnavailable") {
+    checkVersion(
+      (
+        await tx.query<{ version: number }>(
+          "SELECT version FROM picking_tasks WHERE order_item_id=$1",
+          [a.id],
+        )
+      ).rows[0],
+      a.taskVersion,
+    );
     await tx.query(
       "UPDATE order_items SET unavailable=$1,actual_quantity=NULL,actual_unit=NULL,actual_confirmed=false,discrepancy_ack=NULL,amount=$2,version=version+1,updated_at=now() WHERE id=$3",
       [a.unavailable, a.unavailable ? "0.00" : null, a.id],
@@ -747,6 +787,7 @@ export async function runAction(
   const db = await getDb();
   try {
     return await db.transaction(async (tx) => {
+      await requirePermission(tx, actor, actionPermission(parsed.data!.action));
       const prior = (
         await tx.query<{
           actor_id: string;

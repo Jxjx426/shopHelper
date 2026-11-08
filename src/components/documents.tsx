@@ -5,6 +5,7 @@ import { money, type Order, type Workspace } from "@/lib/domain";
 import type { DocumentSnapshot } from "@/lib/documents.server";
 import type { Mutate } from "./types";
 import { ErrorText, Modal } from "./ui";
+import { allowed } from "@/lib/permissions";
 export type DocumentInfo = {
   id: string;
   number: string;
@@ -172,13 +173,15 @@ export default function Documents({
             .map((d) => (
               <DocumentLinks document={d} key={d.id} />
             ))}
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={() => setReopen(true)}
-          >
-            重新打开修订
-          </button>
+          {allowed(data.user, "manage") && (
+            <button
+              className="text-button"
+              disabled={busy}
+              onClick={() => setReopen(true)}
+            >
+              重新打开修订
+            </button>
+          )}
         </>
       ) : (
         <>
@@ -210,7 +213,12 @@ export default function Documents({
             <input
               type="checkbox"
               checked={checked}
-              disabled={busy || unsaved || s.issues.length > 0}
+              disabled={
+                busy ||
+                unsaved ||
+                s.issues.length > 0 ||
+                !allowed(data.user, "finalize")
+              }
               onChange={(e) => setChecked(e.target.checked)}
             />
             <span>已核对餐馆、实供、价格及总额</span>
@@ -218,7 +226,13 @@ export default function Documents({
           <ErrorText message={error} />
           <button
             className="primary full"
-            disabled={busy || unsaved || !checked || s.issues.length > 0}
+            disabled={
+              busy ||
+              unsaved ||
+              !checked ||
+              s.issues.length > 0 ||
+              !allowed(data.user, "finalize")
+            }
             onClick={async () => {
               if (
                 await mutate(
@@ -237,6 +251,9 @@ export default function Documents({
             <FileCheck size={20} />
             {busy ? "处理中…" : "确认定稿"}
           </button>
+          {!allowed(data.user, "finalize") && (
+            <p className="fine-print">请由店主或获授权的员工定稿。</p>
+          )}
         </>
       )}
       {review.documents.some((d) => d.id !== review.finalizedDocumentId) && (

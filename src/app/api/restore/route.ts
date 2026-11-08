@@ -1,8 +1,9 @@
+import { withRequestSession } from "@/lib/request-session.server";
 import { NextRequest } from "next/server";
 import { failure, guardOrigin, json, readBody, requireUser } from "@/lib/http";
 import { confirmRestore, previewRestore } from "@/lib/backup.server";
 export const runtime = "nodejs";
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   try {
     guardOrigin(request);
     const user = await requireUser(request);
@@ -15,4 +16,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return failure(error);
   }
+}
+
+export function POST(request: NextRequest) {
+  return withRequestSession(request, () => post(request));
 }

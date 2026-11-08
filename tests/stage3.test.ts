@@ -39,8 +39,15 @@ import type { Order, Product } from "../src/lib/domain";
 let actor = randomUUID();
 let zone: string;
 const day = "2026-11-08";
-const action = (input: unknown, key = randomUUID()) =>
-  runAction(actor, key, input);
+const action = async (input: unknown, key = randomUUID()) => {
+  const a = input as Record<string, unknown>;
+  if (
+    ["saveShop", "saveThresholds"].includes(String(a.action)) &&
+    a.version === undefined
+  )
+    input = { ...a, version: (await workspace(day)).shop.version };
+  return runAction(actor, key, input);
+};
 before(async () => {
   process.env.SHOP_DATA_DIR = path.join(
     process.cwd(),
@@ -175,6 +182,9 @@ test("restaurant-specific prices override standards including zero; missing pric
     price: "5.00",
     expectedVersion: 0,
   });
+  const firstVersion = (await workspace(day)).restaurantPrices.find(
+    (p) => p.restaurant_id === f.restaurantId && p.product_id === f.productId,
+  )!.version;
   const next = (
     await action({
       action: "saveOrder",
@@ -195,7 +205,7 @@ test("restaurant-specific prices override standards including zero; missing pric
     productId: f.productId,
     billingUnit: "kg",
     price: "0.00",
-    expectedVersion: 1,
+    expectedVersion: firstVersion,
   });
   const item = (await order(f.id)).items[0];
   await action({
@@ -218,7 +228,7 @@ test("restaurant-specific prices override standards including zero; missing pric
       productId: f.productId,
       billingUnit: "kg",
       price: "4",
-      expectedVersion: 1,
+      expectedVersion: firstVersion,
     }),
     /已变化/,
   );
@@ -439,6 +449,7 @@ test("short counts and explicitly unavailable products remain separate and resol
     action: "setUnavailable",
     id: i.id,
     version: i.version,
+    taskVersion: i.task_version,
     unavailable: true,
   });
   preview = await documentPreview(f.id);
@@ -763,6 +774,15 @@ test("backup restoration across a fresh installation preserves snapshots, privat
     shopName: preview.shopName,
   });
   assert(result.safetyFile);
+  const priceVersions = (
+    await db.query<{ maximum: number; next: number }>(
+      "SELECT coalesce((SELECT max(version) FROM restaurant_prices),0)::int maximum,nextval('restaurant_price_version')::int next",
+    )
+  ).rows[0];
+  assert(
+    priceVersions.next > priceVersions.maximum,
+    "restored prices cannot reuse an older optimistic version",
+  );
   assert.equal(await getSession(token), null);
   const owner = (
     await db.query<{ password_hash: string }>(

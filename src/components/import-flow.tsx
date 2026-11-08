@@ -1,4 +1,5 @@
 "use client";
+import { allowed } from "@/lib/permissions";
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
@@ -33,8 +34,11 @@ import { ProductEditor } from "./settings";
 import ScreenshotEditor, { type ScreenshotPayload } from "./screenshot-editor";
 
 async function api<T>(url: string, input?: unknown, key?: string): Promise<T> {
+  if (input !== undefined && !navigator.onLine)
+    throw new Error("连接已断开，尚未提交。输入仍保留，请连接后重试。");
   const response = await fetch(url, {
     cache: "no-store",
+    signal: AbortSignal.timeout(55000),
     ...(input === undefined
       ? {}
       : {
@@ -310,7 +314,18 @@ export default function ImportFlow({
   const lock = useRef(false);
   const reviewAnchor = useRef<HTMLDivElement>(null);
   const keys = useRef(new Map<string, string>());
-  const initialSourceKey = `fresh-helper-import-input:${data.date}`;
+  const deviceScope = `${data.generation}:${data.user?.id ?? "owner"}`;
+  const initialSourceKey = `fresh-helper-import-input:${deviceScope}:${data.date}`;
+  function deviceDraft(key: string, legacy: string) {
+    const saved =
+      localStorage.getItem(key) ??
+      (allowed(data.user, "manage") ? localStorage.getItem(legacy) : null);
+    if (saved && !localStorage.getItem(key)) {
+      localStorage.setItem(key, saved);
+      localStorage.removeItem(legacy);
+    }
+    return saved;
+  }
   const [inputReady, setInputReady] = useState(false);
 
   async function write<T>(url: string, body: unknown): Promise<T> {
@@ -336,7 +351,10 @@ export default function ImportFlow({
     if (restore) {
       try {
         const cached = JSON.parse(
-          localStorage.getItem(`fresh-helper-review:${value.id}`) ?? "null",
+          deviceDraft(
+            `fresh-helper-review:${deviceScope}:${value.id}`,
+            `fresh-helper-review:${value.id}`,
+          ) ?? "null",
         );
         if (
           cached?.version === value.version &&
@@ -379,7 +397,10 @@ export default function ImportFlow({
     else {
       try {
         const raw = JSON.parse(
-          localStorage.getItem(initialSourceKey) ?? "null",
+          deviceDraft(
+            initialSourceKey,
+            `fresh-helper-import-input:${data.date}`,
+          ) ?? "null",
         );
         if (raw) {
           setText(typeof raw.text === "string" ? raw.text : "");
@@ -410,7 +431,7 @@ export default function ImportFlow({
     if (draft && dirty) {
       try {
         localStorage.setItem(
-          `fresh-helper-review:${draft.id}`,
+          `fresh-helper-review:${deviceScope}:${draft.id}`,
           JSON.stringify({
             version: draft.version,
             lines,
@@ -514,7 +535,7 @@ export default function ImportFlow({
         }),
       ),
     });
-    localStorage.removeItem(`fresh-helper-review:${draft.id}`);
+    localStorage.removeItem(`fresh-helper-review:${deviceScope}:${draft.id}`);
     return (await reloadDraft(draft.id))!;
   }
   async function create() {
@@ -794,7 +815,9 @@ export default function ImportFlow({
                     token: preview.token,
                     identicalAcknowledged,
                   });
-                  localStorage.removeItem(`fresh-helper-review:${draft.id}`);
+                  localStorage.removeItem(
+                    `fresh-helper-review:${deviceScope}:${draft.id}`,
+                  );
                   await onComplete();
                 })
               }
@@ -983,15 +1006,17 @@ export default function ImportFlow({
                 const rule = product?.units.find(
                   (u) => u.orderUnit === line.unit,
                 );
-                const aliasAllowed = Boolean(
-                  line.productText &&
-                  normalizeName(line.sourceText).includes(
-                    normalizeName(line.productText),
-                  ) &&
-                  product &&
-                  normalizeName(product.name) !==
-                    normalizeName(line.productText),
-                );
+                const aliasAllowed =
+                  allowed(data.user, "manage") &&
+                  Boolean(
+                    line.productText &&
+                    normalizeName(line.sourceText).includes(
+                      normalizeName(line.productText),
+                    ) &&
+                    product &&
+                    normalizeName(product.name) !==
+                      normalizeName(line.productText),
+                  );
                 return (
                   <article
                     key={line.id}
@@ -1110,7 +1135,9 @@ export default function ImportFlow({
                         <button
                           className="text-button"
                           disabled={
-                            blocked || !data.zones.some((z) => z.active)
+                            blocked ||
+                            !data.zones.some((z) => z.active) ||
+                            !allowed(data.user, "manage")
                           }
                           onClick={() => setCreatingProduct(line)}
                         >

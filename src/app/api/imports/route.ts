@@ -1,3 +1,4 @@
+import { withRequestSession } from "@/lib/request-session.server";
 import { NextRequest } from "next/server";
 import { failure, guardOrigin, json, readBody, requireUser } from "@/lib/http";
 import { createImport, listDrafts } from "@/lib/imports.server";
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
     return failure(error);
   }
 }
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   try {
     guardOrigin(request);
     const user = await requireUser(request);
@@ -38,4 +39,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return failure(error);
   }
+}
+
+export function POST(request: NextRequest) {
+  return withRequestSession(request, () => post(request));
 }

@@ -124,6 +124,7 @@ export type Product = {
   units: UnitRule[];
 };
 export type OrderItem = {
+  last_changed_by?: string | null;
   id: string;
   order_id: string;
   product_id: string;
@@ -158,7 +159,10 @@ export type Order = {
   finalized_document_id: string | null;
 };
 export type Workspace = {
+  generation: string;
+  user?: import("./permissions").CurrentUser;
   shop: {
+    version: number;
     name: string;
     small_weight_percent: string;
     large_weight_percent: string;

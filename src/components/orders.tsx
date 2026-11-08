@@ -1,4 +1,5 @@
 "use client";
+import { allowed } from "@/lib/permissions";
 import History from "./history";
 import { useEffect, useState } from "react";
 import {
@@ -54,10 +55,17 @@ function OrderEditor({
   const [localError, setLocalError] = useState("");
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
-  const key = `fresh-helper-draft:${data.date}:${order?.id ?? "new"}`;
+  const key = `fresh-helper-draft:${data.generation}:${data.user?.id ?? "owner"}:${data.date}:${order?.id ?? "new"}`;
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(key);
+      const legacyKey = `fresh-helper-draft:${data.date}:${order?.id ?? "new"}`;
+      const saved =
+        localStorage.getItem(key) ??
+        (allowed(data.user, "manage") ? localStorage.getItem(legacyKey) : null);
+      if (saved && !localStorage.getItem(key)) {
+        localStorage.setItem(key, saved);
+        localStorage.removeItem(legacyKey);
+      }
       if (saved) {
         const draft = JSON.parse(saved);
         if (
@@ -352,6 +360,7 @@ export default function Orders(
   },
 ) {
   const { data, mutate, busy, onSettings } = props;
+  const canImport = allowed(data.user, "import");
   const [editor, setEditor] = useState<Order | "new" | null>(null);
   const [filter, setFilter] = useState("");
   const [importing, setImporting] = useState<{ id: string | null } | null>(
@@ -382,7 +391,9 @@ export default function Orders(
           </button>
           <button
             className="primary"
-            disabled={busy || !data.restaurants.some((r) => r.active)}
+            disabled={
+              busy || !canImport || !data.restaurants.some((r) => r.active)
+            }
             onClick={() => setImporting({ id: null })}
           >
             <Plus size={22} />
@@ -391,7 +402,7 @@ export default function Orders(
           <button
             className="secondary"
             onClick={() => setEditor("new")}
-            disabled={!canCreate || busy}
+            disabled={!canCreate || busy || !canImport}
           >
             <Plus size={23} />
             手动新增
@@ -424,11 +435,13 @@ export default function Orders(
           <ScaleIcon />
         </div>
       </div>
-      <DraftImports
-        date={data.date}
-        refresh={draftRefresh}
-        onOpen={(id) => setImporting({ id })}
-      />
+      {canImport && (
+        <DraftImports
+          date={data.date}
+          refresh={draftRefresh}
+          onOpen={(id) => setImporting({ id })}
+        />
+      )}
       {!canCreate && (
         <section className="setup-card">
           <div className="setup-number">1</div>
@@ -448,6 +461,7 @@ export default function Orders(
           action={
             <button
               className="primary"
+              disabled={!canImport}
               onClick={() => (canCreate ? setEditor("new") : onSettings())}
             >
               <Plus size={22} />
@@ -486,7 +500,7 @@ export default function Orders(
                     <button
                       className={`urgency-button ${order.urgent ? "urgent" : ""}`}
                       aria-label={`${order.urgent ? "取消" : "设为"}加急：${order.restaurant_name}`}
-                      disabled={busy}
+                      disabled={busy || !canImport}
                       onClick={() =>
                         void mutate(
                           {
@@ -536,7 +550,7 @@ export default function Orders(
                   </div>
                   <button
                     className="secondary full"
-                    disabled={busy || !!order.picking_started_at}
+                    disabled={busy || !!order.picking_started_at || !canImport}
                     onClick={() => setEditor(order)}
                   >
                     {order.picking_started_at ? (

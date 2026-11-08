@@ -5,6 +5,7 @@ import {
   createHash,
 } from "node:crypto";
 import { getDb, type Transaction } from "./db";
+import type { CurrentUser } from "./permissions";
 export const SESSION_COOKIE = "fresh_session";
 export function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
@@ -30,8 +31,8 @@ export async function makeSession(tx: Transaction, userId: string) {
 export async function getSession(token?: string) {
   if (!token) return null;
   const db = await getDb();
-  const result = await db.query<{ id: string; name: string; role: string }>(
-    "SELECT u.id,u.name,u.role FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=$1 AND s.expires_at>now()",
+  const result = await db.query<CurrentUser>(
+    "SELECT u.id,u.name,u.username,u.role,u.can_import,u.can_finalize FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active=true AND u.role IN ('owner','admin','staff')",
     [tokenHash(token)],
   );
   return result.rows[0] ?? null;

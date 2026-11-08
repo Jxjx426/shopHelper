@@ -8,9 +8,9 @@ export function guardOrigin(request: NextRequest) {
   // Next normalizes a loopback nextUrl hostname to localhost. The HTTP Host
   // retains the browser-facing address (127.0.0.1 or a LAN IP).
   const host = request.headers.get("host");
-  const expected = host
-    ? `${request.nextUrl.protocol}//${host}`
-    : request.nextUrl.origin;
+  const expected =
+    process.env.SHOP_PUBLIC_ORIGIN ||
+    (host ? `${request.nextUrl.protocol}//${host}` : request.nextUrl.origin);
   if (request.headers.get("origin") !== expected)
     throw new AppError("请求来源无效，请重新打开页面", 403);
 }

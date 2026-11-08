@@ -1,4 +1,5 @@
 "use client";
+import { allowed } from "@/lib/permissions";
 import { useEffect, useState } from "react";
 import { money, type Order } from "@/lib/domain";
 import type { ViewProps } from "./types";
@@ -218,7 +219,7 @@ export default function History({
           <div className="action-wrap">
             <button
               className="secondary"
-              disabled={busy}
+              disabled={busy || !allowed(data.user, "manage")}
               onClick={() => {
                 setDate(data.date);
                 setCopyReview(null);
@@ -231,7 +232,7 @@ export default function History({
             {detail.order.deleted_at ? (
               <button
                 className="primary"
-                disabled={busy}
+                disabled={busy || !allowed(data.user, "manage")}
                 onClick={async () => {
                   if (
                     await mutate(
@@ -254,7 +255,7 @@ export default function History({
             ) : (
               <button
                 className="secondary danger-text"
-                disabled={busy}
+                disabled={busy || !allowed(data.user, "manage")}
                 onClick={() => setDeleting(true)}
               >
                 删除订单
@@ -278,14 +279,14 @@ export default function History({
               <div className="modal-actions">
                 <button
                   className="secondary"
-                  disabled={busy}
+                  disabled={busy || !allowed(data.user, "manage")}
                   onClick={() => setDeleting(false)}
                 >
                   取消
                 </button>
                 <button
                   className="primary"
-                  disabled={busy}
+                  disabled={busy || !allowed(data.user, "manage")}
                   onClick={async () => {
                     if (
                       await mutate(

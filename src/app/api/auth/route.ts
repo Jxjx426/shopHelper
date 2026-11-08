@@ -21,7 +21,11 @@ export async function GET(request: NextRequest) {
   try {
     const db = await getDb();
     const configured =
-      (await db.query("SELECT id FROM users LIMIT 1")).rows.length > 0;
+      (
+        await db.query(
+          "SELECT id FROM users WHERE role IN ('owner','admin') LIMIT 1",
+        )
+      ).rows.length > 0;
     return json({
       configured,
       user: await getSession(request.cookies.get(SESSION_COOKIE)?.value),
@@ -37,6 +41,7 @@ export async function POST(request: NextRequest) {
       .object({
         action: z.enum(["setup", "login", "logout"]),
         password: z.string().max(128).optional(),
+        username: z.string().trim().toLowerCase().max(32).optional(),
         shopName: z.string().trim().max(80).optional(),
       })
       .safeParse(await readBody(request, 4096));
@@ -57,7 +62,20 @@ export async function POST(request: NextRequest) {
       string,
       number[]
     >());
-    const attemptKey = "owner"; // Single-owner local edition: one shared brute-force budget.
+    const attemptKey = a.username || "owner";
+    if (attempts.size >= 200) {
+      for (const [key, values] of attempts)
+        if (values.every((t) => Date.now() - t > 300000)) attempts.delete(key);
+    }
+    const total = (attempts.get("_all") ?? []).filter(
+      (t) => Date.now() - t < 300000,
+    );
+    if (
+      total.length >= 100 ||
+      (attempts.size >= 200 && !attempts.has(attemptKey))
+    )
+      throw new AppError("尝试次数太多，请5分钟后再试", 429);
+    attempts.set("_all", [...total, Date.now()]);
     const recent = (attempts.get(attemptKey) ?? []).filter(
       (t) => Date.now() - t < 300000,
     );
@@ -68,22 +86,30 @@ export async function POST(request: NextRequest) {
     const token = await db.transaction(async (tx) => {
       const existing = (
         await tx.query<{ id: string; password_hash: string }>(
-          "SELECT id,password_hash FROM users WHERE role IN ('owner','admin') ORDER BY created_at,id LIMIT 1",
+          "SELECT id,password_hash FROM users WHERE active=true AND role IN ('owner','admin','staff') AND lower(username)=$1",
+          [a.username || "owner"],
         )
       ).rows[0];
       if (a.action === "setup") {
-        if (existing) throw new AppError("已完成设置，请登录", 409);
+        if (
+          (
+            await tx.query(
+              "SELECT id FROM users WHERE role IN ('owner','admin') LIMIT 1",
+            )
+          ).rows.length
+        )
+          throw new AppError("已完成设置，请登录", 409);
         if (!a.shopName) throw new AppError("请填写店名");
         const userId = randomUUID();
         await tx.query(
-          "INSERT INTO users(id,name,password_hash) VALUES($1,'店主',$2)",
+          "INSERT INTO users(id,name,username,password_hash) VALUES($1,'店主','owner',$2)",
           [userId, hashPassword(a.password!)],
         );
         await tx.query("UPDATE shop SET name=$1 WHERE id=1", [a.shopName]);
         return makeSession(tx, userId);
       }
       if (!existing || !verifyPassword(a.password!, existing.password_hash))
-        throw new AppError("密码不正确，请重新输入", 401);
+        throw new AppError("登录名或密码不正确，请重新输入", 401);
       return makeSession(tx, existing.id);
     });
     attempts.delete(attemptKey);
@@ -91,7 +117,9 @@ export async function POST(request: NextRequest) {
     response.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: "strict",
-      secure: request.nextUrl.protocol === "https:",
+      secure:
+        process.env.SHOP_PUBLIC_ORIGIN?.startsWith("https://") ||
+        request.nextUrl.protocol === "https:",
       path: "/",
       maxAge: 604800,
     });

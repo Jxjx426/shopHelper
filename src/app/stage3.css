@@ -99,3 +99,33 @@
     margin-left: auto;
   }
 }
+
+.staff-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.staff-row > div {
+  min-width: 0;
+}
+.staff-row p {
+  margin: 4px 0;
+}
+.topbar .connection {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .staff-row {
+    flex-wrap: wrap;
+  }
+  .topbar .connection {
+    max-width: 55%;
+    font-size: calc(14px * var(--font-scale));
+  }
+}

@@ -12,6 +12,7 @@ import {
   UNITS,
 } from "./domain";
 import { renderDeliveryPdf } from "./pdf.server";
+import { requirePermission } from "./permissions.server";
 export const digest = (value: string | Uint8Array) =>
   createHash("sha256").update(value).digest("hex");
 export const documentSnapshotSchema = z
@@ -45,15 +46,7 @@ export const documentSnapshotSchema = z
   .strict();
 export type DocumentSnapshot = z.infer<typeof documentSnapshotSchema>;
 export async function requireOwner(tx: Transaction, actor: string) {
-  if (
-    !(
-      await tx.query(
-        "SELECT id FROM users WHERE id=$1 AND role IN ('owner','admin')",
-        [actor],
-      )
-    ).rows.length
-  )
-    throw new AppError("此操作只限店主", 403);
+  await requirePermission(tx, actor, "manage");
 }
 export async function loadOrder(
   tx: Transaction,
@@ -200,7 +193,11 @@ export async function applyDocument(
   actor: string,
   a: DocumentAction,
 ) {
-  await requireOwner(tx, actor);
+  await requirePermission(
+    tx,
+    actor,
+    a.action === "finalizeOrder" ? "finalize" : "manage",
+  );
   const state = await documentState(tx, a.id);
   if (a.action === "reopenOrder") {
     if (state.order.version !== a.version)

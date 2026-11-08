@@ -23,7 +23,9 @@ import Picking from "./picking";
 import Weighing from "./weighing";
 import ShopSettings from "./settings";
 import { FontSetting, useFontSize } from "./font-setting";
-type Auth = { configured: boolean; user: { id: string; name: string } | null };
+import type { CurrentUser } from "@/lib/permissions";
+import { retryKey, forgetRetry } from "@/lib/retry-ledger";
+type Auth = { configured: boolean; user: CurrentUser | null };
 type Tab = "orders" | "picking" | "weighing" | "settings";
 const tabs = [
   { id: "orders", label: "今日订单", icon: ClipboardList },
@@ -32,7 +34,11 @@ const tabs = [
   { id: "settings", label: "设置", icon: Settings },
 ] as const;
 async function request(url: string, init?: RequestInit) {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
+    ...init,
+  });
   const body = await response.json();
   if (!response.ok)
     throw Object.assign(new Error(body.error ?? "操作失败，请重试"), {
@@ -45,6 +51,7 @@ export default function ShopApp() {
   const [auth, setAuth] = useState<Auth | null>(null);
   const [authError, setAuthError] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("owner");
   const [shopName, setShopName] = useState("");
   const [date, setDate] = useState(todayMalaysia);
   const dateRef = useRef(date);
@@ -57,19 +64,30 @@ export default function ShopApp() {
     null,
   );
   const [online, setOnline] = useState(true);
+  const [connected, setConnected] = useState(true);
+  const [pending, setPending] = useState(false);
+  const loadSequence = useRef(0);
   const failedRequests = useRef(new Map<string, string>());
   const mutationLock = useRef(false);
-  const load = useCallback(async (selected: string) => {
-    setLoading(true);
+  const load = useCallback(async (selected: string, silent = false) => {
+    const sequence = ++loadSequence.current;
+    if (!silent) setLoading(true);
     try {
       const value = await request(`/api/workspace?date=${selected}`);
-      if (dateRef.current === selected) setData(value);
+      if (sequence === loadSequence.current && dateRef.current === selected) {
+        setConnected(true);
+        setData((previous) =>
+          JSON.stringify(previous) === JSON.stringify(value) ? previous : value,
+        );
+      }
     } catch (e) {
+      if (sequence === loadSequence.current) setConnected(false);
       if ((e as { status?: number }).status === 401)
         setAuth((previous) => (previous ? { ...previous, user: null } : null));
       throw e;
     } finally {
-      if (dateRef.current === selected) setLoading(false);
+      if (sequence === loadSequence.current && dateRef.current === selected)
+        setLoading(false);
     }
   }, []);
   const checkAuth = useCallback(async () => {
@@ -99,6 +117,30 @@ export default function ShopApp() {
       );
   }, [auth?.user, date, load]);
   useEffect(() => {
+    if (!auth?.user) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (
+        !mutationLock.current &&
+        navigator.onLine &&
+        document.visibilityState === "visible"
+      ) {
+        try {
+          await load(dateRef.current, true);
+        } catch {
+          /* The connection badge reports failure; inputs stay mounted. */
+        }
+      }
+      if (!stopped) timer = setTimeout(poll, 2000);
+    };
+    timer = setTimeout(poll, 2000);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [auth?.user?.id, load]);
+  useEffect(() => {
     window.scrollTo(0, 0);
   }, [tab, date]);
   async function logout() {
@@ -116,7 +158,8 @@ export default function ShopApp() {
   }
   async function mutate(action: Record<string, unknown>, success = "已保存") {
     if (mutationLock.current) return false;
-    if (!navigator.onLine) {
+    if (!navigator.onLine || !connected) {
+      setPending(true);
       setNotice({
         text: "网络已断开，尚未保存。输入仍保留，请连接后重试。",
         error: true,
@@ -127,7 +170,19 @@ export default function ShopApp() {
     setBusy(true);
     setNotice(null);
     const fingerprint = JSON.stringify(action);
-    const requestId = failedRequests.current.get(fingerprint) ?? clientId();
+    let requestId = failedRequests.current.get(fingerprint) ?? clientId();
+    if (action.action !== "saveStaff" && auth?.user) {
+      try {
+        requestId = retryKey(
+          localStorage,
+          `${auth.user.id}:${data?.generation}`,
+          fingerprint,
+          () => requestId,
+        );
+      } catch {
+        /* In-memory retry identity remains available on this page. */
+      }
+    }
     failedRequests.current.set(fingerprint, requestId);
     try {
       await request("/api/actions", {
@@ -139,6 +194,13 @@ export default function ShopApp() {
         body: JSON.stringify(action),
       });
       failedRequests.current.delete(fingerprint);
+      if (auth?.user)
+        forgetRetry(
+          localStorage,
+          `${auth.user.id}:${data?.generation}`,
+          fingerprint,
+        );
+      setPending(false);
       setNotice({ text: success, error: false });
       try {
         await load(dateRef.current);
@@ -153,6 +215,21 @@ export default function ShopApp() {
       const error = e as Error & { status?: number };
       if (error.status && error.status < 500)
         failedRequests.current.delete(fingerprint);
+      if (error.status && error.status < 500 && auth?.user)
+        forgetRetry(
+          localStorage,
+          `${auth.user.id}:${data?.generation}`,
+          fingerprint,
+        );
+      setPending(true);
+      if (!error.status || error.status >= 500) setConnected(false);
+      if (error.status === 409) {
+        try {
+          await load(dateRef.current, true);
+        } catch {
+          /* Keep the conflict and local input visible. */
+        }
+      }
       if (error.status === 401)
         setAuth((previous) => (previous ? { ...previous, user: null } : null));
       setNotice({
@@ -179,10 +256,12 @@ export default function ShopApp() {
         body: JSON.stringify({
           action: auth?.configured ? "login" : "setup",
           password,
+          username,
           shopName,
         }),
       });
       setPassword("");
+      setData(null);
       await checkAuth();
     } catch (e) {
       setAuthError((e as Error).message);
@@ -206,7 +285,9 @@ export default function ShopApp() {
           <h1>鲜配助手</h1>
           <FontSetting {...fontPreference} />
           <p className="auth-description">
-            {auth?.configured ? "输入店主密码。" : "设置店名和店主密码。"}
+            {auth?.configured
+              ? "使用自己的账号登录。店主登录名为 owner。"
+              : "设置店名和店主密码。"}
           </p>
           {!auth ? (
             <>
@@ -233,13 +314,22 @@ export default function ShopApp() {
                   />
                 </Field>
               )}
+              {auth.configured && (
+                <Field label="登录名">
+                  <input
+                    autoComplete="username"
+                    required
+                    maxLength={32}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                </Field>
+              )}
               <Field
-                label={auth.configured ? "店主密码" : "设置店主密码"}
-                hint={
-                  !auth.configured
-                    ? "至少8位，请妥善保管。此版本只有一个店主账号。"
-                    : undefined
-                }
+                label={auth.configured ? "密码" : "设置店主密码"}
+                hint={!auth.configured ? "至少8位，请妥善保管。" : undefined}
               >
                 <input
                   type="password"
@@ -260,9 +350,9 @@ export default function ShopApp() {
             </form>
           )}
           <div className="edition-note">
-            第 3 阶段 · 本地配货与出单版
+            第 4 阶段 · 店铺共享版
             <br />
-            订单保存在本机；AI 导入需先阅读数据说明并确认
+            订单保存在店铺服务器；AI 导入需先确认数据说明
           </div>
         </div>
       </main>
@@ -301,11 +391,11 @@ export default function ShopApp() {
         <div className="side-bottom">
           <div className="local-badge">
             <span />
-            本地订单审核版
+            {auth.user.name}
           </div>
           <button className="text-button" onClick={() => void logout()}>
             <LogOut size={18} />
-            退出店主账号
+            退出账号
           </button>
         </div>
       </aside>
@@ -352,12 +442,23 @@ export default function ShopApp() {
             </button>
           </div>
           <div className="connection">
-            <span className={`status-dot ${!online ? "offline" : ""}`} />
-            {!online ? "连接已断开" : busy ? "保存中…" : "本机数据库"}
+            <span
+              className={`status-dot ${!online || !connected ? "offline" : ""}`}
+            />
+            <span>
+              {auth.user.name} ·{" "}
+              {!online || !connected
+                ? "连接已断开"
+                : busy
+                  ? "保存中…"
+                  : pending
+                    ? "未保存"
+                    : "已同步"}
+            </span>
           </div>
         </header>
         <main className="workspace">
-          {!online && (
+          {(!online || !connected) && (
             <div className="notice error" role="alert">
               <WifiOff size={22} />
               连接已断开，不能提交。未保存的输入仍保留。
@@ -442,7 +543,7 @@ export default function ShopApp() {
           )}
         </main>
         <footer className="workspace-footer">
-          <Leaf size={16} /> 鲜配助手 · 第 3 阶段
+          <Leaf size={16} /> 鲜配助手 · 第 4 阶段
           <span>手动录单 · 配货 · 称重</span>
         </footer>
       </div>

@@ -436,6 +436,9 @@ async function insertBackup(tx: Transaction, data: Backup, owner?: string) {
     "SELECT setval('delivery_document_no',greatest($1::bigint,$2::bigint),$3)",
     [max ?? "1", sequence.value, !!max || sequence.is_called],
   );
+  await tx.query(
+    "SELECT setval('restaurant_price_version',greatest((SELECT last_value FROM restaurant_price_version),coalesce((SELECT max(version) FROM restaurant_prices),1)),true)",
+  );
 }
 export async function validateBackup(input: unknown) {
   let temp: PGlite | undefined;
@@ -529,6 +532,9 @@ export async function confirmRestore(actor: string, input: unknown) {
       await tx.query(`DELETE FROM ${table}`);
     await insertBackup(tx, preview.payload, actor);
     await tx.query("DELETE FROM sessions");
+    await tx.query("UPDATE app_state SET generation=$1 WHERE id=1", [
+      randomUUID(),
+    ]);
     await tx.query("DELETE FROM restore_previews");
     await tx.query(
       "INSERT INTO change_records(id,actor_id,action,entity_id,details) VALUES($1,$2,'restoreBackup','1',$3)",

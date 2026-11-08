@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ErrorText, Field, Modal } from "./ui";
 type Preview = {
   token: string;
@@ -10,6 +10,37 @@ type Preview = {
   documents: number;
 };
 export default function BackupRestore() {
+  const [health, setHealth] = useState<{
+    enabled: boolean;
+    lastSuccess: string | null;
+    error: string | null;
+  } | null>(null);
+  const [healthError, setHealthError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    const read = async () => {
+      try {
+        const r = await fetch("/api/backup/status", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(12000),
+        });
+        if (!r.ok) throw new Error();
+        const value = await r.json();
+        if (!cancelled) {
+          setHealth(value);
+          setHealthError("");
+        }
+      } catch {
+        if (!cancelled) setHealthError("未能读取自动备份状态，请检查连接。");
+      }
+    };
+    void read();
+    const timer = setInterval(() => void read(), 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -46,6 +77,26 @@ export default function BackupRestore() {
   }
   return (
     <div className="restore-box">
+      <h3>自动备份</h3>
+      {health && (
+        <p>
+          {health.enabled
+            ? "已开启，每天一份"
+            : "未开启，请先配置服务器备份目录及开关"}
+        </p>
+      )}
+      {health?.lastSuccess && (
+        <p>
+          最近成功：
+          {new Date(health.lastSuccess).toLocaleString("zh-CN", {
+            timeZone: "Asia/Kuala_Lumpur",
+          })}
+        </p>
+      )}
+      {health?.enabled && !health.lastSuccess && !health.error && (
+        <p>等待首次备份，请稍后确认文件已生成。</p>
+      )}
+      <ErrorText message={health?.error || healthError} />
       <h3>恢复备份</h3>
       <p className="fine-print">
         先验证文件，再确认替换。恢复前自动保存一份现有资料；登录密码保持不变。

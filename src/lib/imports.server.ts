@@ -1,3 +1,4 @@
+import { requirePermission } from "./permissions.server";
 import { randomUUID, createHash } from "node:crypto";
 import sharp from "sharp";
 import { resolvePrice } from "./pricing.server";
@@ -97,6 +98,7 @@ async function draftRow(
   id: string,
   includeDeleted = false,
 ): Promise<ImportDraft> {
+  await requirePermission(tx, actor, "import");
   const draft = (
     await tx.query<ImportDraft>(
       `SELECT d.*,d.delivery_date::text AS delivery_date,r.name restaurant_name,i.original_mime,i.prepared_mime,(SELECT count(*)::int FROM extraction_attempts a WHERE a.draft_id=d.id) attempts FROM import_drafts d JOIN restaurants r ON r.id=d.restaurant_id LEFT JOIN import_images i ON i.draft_id=d.id WHERE d.id=$1 AND d.created_by=$2`,
@@ -148,6 +150,7 @@ async function replay<T>(
   work: () => Promise<T>,
 ): Promise<T> {
   ensure(keySchema.safeParse(key).success, "操作编号无效");
+  await requirePermission(tx, actor, "import");
   const prior = (
     await tx.query<{ actor_id: string; payload_hash: string; response: T }>(
       "SELECT * FROM operation_requests WHERE key=$1",
@@ -233,6 +236,7 @@ export async function createImport(actor: string, key: string, input: unknown) {
   const db = await getDb();
   return db.transaction((tx) =>
     replay(tx, actor, key, inputHash, async () => {
+      await requirePermission(tx, actor, "import");
       const restaurant = (
         await tx.query<Restaurant>(
           "SELECT * FROM restaurants WHERE id=$1 AND active=true",
@@ -317,6 +321,9 @@ export async function getDraft(actor: string, id: string) {
   });
 }
 export async function listDrafts(actor: string, date: string, deleted = false) {
+  await (
+    await getDb()
+  ).transaction((tx) => requirePermission(tx, actor, "import"));
   ensure(validDate(date), "日期无效");
   const db = await getDb();
   return (
@@ -1051,6 +1058,7 @@ export async function confirmImport(
       for (const line of draft.lines.filter(
         (l) => l.disposition === "item" && l.saveAlias,
       )) {
+        await requirePermission(tx, actor, "manage");
         const term = line.productText.trim();
         ensure(
           term &&

@@ -1,3 +1,4 @@
+import { withRequestSession } from "@/lib/request-session.server";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { failure, guardOrigin, json, readBody, requireUser } from "@/lib/http";
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest, context: Context) {
     return failure(error);
   }
 }
-export async function POST(request: NextRequest, context: Context) {
+async function post(request: NextRequest, context: Context) {
   try {
     guardOrigin(request);
     const user = await requireUser(request);
@@ -70,4 +71,8 @@ export async function POST(request: NextRequest, context: Context) {
   } catch (error) {
     return failure(error);
   }
+}
+
+export function POST(request: NextRequest, context: Context) {
+  return withRequestSession(request, () => post(request, context));
 }

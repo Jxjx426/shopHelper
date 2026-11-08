@@ -6,12 +6,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   try {
-    await requireUser(request);
-    return json(
-      await workspace(
-        request.nextUrl.searchParams.get("date") ?? todayMalaysia(),
-      ),
+    const user = await requireUser(request);
+    const data = await workspace(
+      request.nextUrl.searchParams.get("date") ?? todayMalaysia(),
     );
+    return json({ ...data, user });
   } catch (error) {
     return failure(error);
   }

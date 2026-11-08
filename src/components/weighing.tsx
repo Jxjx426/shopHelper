@@ -1,4 +1,5 @@
 "use client";
+import { allowed } from "@/lib/permissions";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import {
@@ -58,13 +59,17 @@ function ActualItem({
       (isWeight(item.billing_unit) ? "kg" : item.billing_unit),
   );
   const [dirty, setDirty] = useState(false);
+  const [baseVersion, setBaseVersion] = useState(item.version);
   const [localError, setLocalError] = useState("");
   const [failedSave, setFailedSave] = useState(false);
   const [refreshPrice, setRefreshPrice] = useState(false);
-  const [unavailable, setUnavailable] = useState(false);
+  const [unavailable, setUnavailable] = useState<{
+    version: number;
+    taskVersion: number;
+  } | null>(null);
   const [warningNext, setWarningNext] = useState<boolean | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const localKey = `fresh-helper-actual:${item.id}`;
+  const localKey = `fresh-helper-actual:${data.generation}:${data.user?.id ?? "owner"}:${item.id}`;
   useEffect(() => {
     onDirtyChange(item.id, dirty);
     return () => onDirtyChange(item.id, false);
@@ -72,35 +77,67 @@ function ActualItem({
   useEffect(() => {
     if (readOnly) return;
     try {
-      const raw = localStorage.getItem(localKey);
+      const legacyKey = `fresh-helper-actual:${item.id}`;
+      const raw =
+        localStorage.getItem(localKey) ??
+        (allowed(data.user, "manage") ? localStorage.getItem(legacyKey) : null);
+      if (raw && !localStorage.getItem(localKey)) {
+        localStorage.setItem(localKey, raw);
+        localStorage.removeItem(legacyKey);
+      }
       if (raw) {
         const draft = JSON.parse(raw);
         if (
-          draft.version === item.version &&
+          Number.isInteger(draft.version) &&
           typeof draft.actual === "string" &&
           typeof draft.unit === "string"
         ) {
           setActual(draft.actual);
           setUnit(draft.unit);
           setDirty(true);
+          setBaseVersion(draft.version);
         }
       }
     } catch {
       /* Keep the saved server value if local draft is invalid. */
     }
-  }, [localKey, item.version, readOnly]);
+  }, [localKey, readOnly]);
+  useEffect(() => {
+    if (!dirty && item.version !== baseVersion) {
+      setActual(
+        item.actual_quantity
+          ? new Decimal(item.actual_quantity).toString()
+          : isWeight(item.billing_unit)
+            ? ""
+            : new Decimal(item.ordered_quantity).toString(),
+      );
+      setUnit(
+        item.actual_unit ??
+          (isWeight(item.billing_unit) ? "kg" : item.billing_unit),
+      );
+      setBaseVersion(item.version);
+    }
+  }, [
+    item.version,
+    item.actual_quantity,
+    item.actual_unit,
+    item.billing_unit,
+    item.ordered_quantity,
+    dirty,
+    baseVersion,
+  ]);
   useEffect(() => {
     if (dirty) {
       try {
         localStorage.setItem(
           localKey,
-          JSON.stringify({ actual, unit, version: item.version }),
+          JSON.stringify({ actual, unit, version: baseVersion }),
         );
       } catch {
         setLocalError("本机未能保留输入，请保持页面打开直到保存成功。");
       }
     }
-  }, [actual, unit, dirty, localKey, item.version]);
+  }, [actual, unit, dirty, localKey, baseVersion]);
   let preview: string | null = null;
   try {
     if (
@@ -167,7 +204,7 @@ function ActualItem({
         {
           action: "saveActual",
           id: item.id,
-          version: item.version,
+          version: baseVersion,
           quantity: actual,
           unit,
           acknowledgeDiscrepancy: !!warning?.warning,
@@ -214,6 +251,34 @@ function ActualItem({
           </strong>
         </span>
       </div>
+      {item.last_changed_by && (
+        <p className="fine-print">最近修改：{item.last_changed_by}</p>
+      )}
+      {dirty && baseVersion !== item.version && (
+        <div className="inline-note" role="alert">
+          <p>此项已被其他人更新，你的输入尚未保存。</p>
+          <p>
+            最新实供：
+            {item.unavailable
+              ? "缺货"
+              : item.actual_quantity
+                ? `${Number(item.actual_quantity)} ${item.actual_unit}`
+                : "待确认"}
+            ；你的输入：{actual} {unit}
+          </p>
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => {
+              setBaseVersion(item.version);
+              setFailedSave(false);
+              setWarningNext(null);
+            }}
+          >
+            已核对，保留输入重新保存
+          </button>
+        </div>
+      )}
       {warning?.warning && !item.unavailable && (
         <p className="inline-note">
           重量{warning.direction} {warning.percent}%（阈值 {warning.threshold}
@@ -243,6 +308,7 @@ function ActualItem({
                   action: "setUnavailable",
                   id: item.id,
                   version: item.version,
+                  taskVersion: item.task_version,
                   unavailable: false,
                 },
                 "已取消缺货，请重新确认实供",
@@ -335,7 +401,12 @@ function ActualItem({
             <button
               className="secondary"
               disabled={busy}
-              onClick={() => setUnavailable(true)}
+              onClick={() =>
+                setUnavailable({
+                  version: item.version,
+                  taskVersion: item.task_version,
+                })
+              }
             >
               标记缺货
             </button>
@@ -369,7 +440,13 @@ function ActualItem({
           </span>
           <button
             className="text-button"
-            disabled={busy || dirty || currentPrice === null || !priceChanged}
+            disabled={
+              busy ||
+              dirty ||
+              currentPrice === null ||
+              !priceChanged ||
+              !allowed(data.user, "manage")
+            }
             onClick={() => setRefreshPrice(true)}
           >
             <RefreshCw size={16} />
@@ -381,7 +458,7 @@ function ActualItem({
         <Modal
           title="确认不供货？"
           onClose={() => {
-            if (!busy) setUnavailable(false);
+            if (!busy) setUnavailable(null);
           }}
         >
           <h3>{product}</h3>
@@ -394,7 +471,7 @@ function ActualItem({
             <button
               className="secondary"
               disabled={busy}
-              onClick={() => setUnavailable(false)}
+              onClick={() => setUnavailable(null)}
             >
               返回
             </button>
@@ -407,14 +484,15 @@ function ActualItem({
                     {
                       action: "setUnavailable",
                       id: item.id,
-                      version: item.version,
+                      version: unavailable.version,
+                      taskVersion: unavailable.taskVersion,
                       unavailable: true,
                     },
                     "已确认缺货，金额为 RM 0.00",
                   )
                 ) {
                   localStorage.removeItem(localKey);
-                  setUnavailable(false);
+                  setUnavailable(null);
                 }
               }}
             >
@@ -651,7 +729,7 @@ export default function Weighing({ data, mutate, busy, error }: ViewProps) {
               <fieldset
                 className="actual-lock"
                 disabled={!!order.finalized_document_id}
-                key={`${item.id}:${item.version}:${order.finalized_document_id}`}
+                key={`${item.id}:${order.finalized_document_id}`}
               >
                 <ActualItem
                   item={item}

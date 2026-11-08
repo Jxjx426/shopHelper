@@ -296,6 +296,7 @@ test("unavailable is explicitly resolved at zero and undo returns to pending", a
     action: "setUnavailable",
     id: item.id,
     version: item.version,
+    taskVersion: item.task_version,
     unavailable: true,
   });
   item = (await workspace(day)).orders.find((o) => o.id === f.order.id)!
@@ -316,6 +317,7 @@ test("unavailable is explicitly resolved at zero and undo returns to pending", a
     action: "setUnavailable",
     id: item.id,
     version: item.version,
+    taskVersion: item.task_version,
     unavailable: false,
   });
   item = (await workspace(day)).orders.find((o) => o.id === f.order.id)!

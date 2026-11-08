@@ -1,8 +1,11 @@
 import { PGlite } from "@electric-sql/pglite";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-// Internal additive migration revision; backup format remains version 2.
-const SCHEMA_REVISION = 5;
+import { requestSession } from "./request-session.server";
+import { AppError } from "./errors";
+import { acquireDatabaseLock } from "./database-lock.server";
+// Internal additive migration revision; business backup format remains version 3.
+const SCHEMA_REVISION = 9;
 
 export const schema = `
 CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY);
@@ -20,10 +23,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS product_name_unique ON products(lower(name));
 CREATE TABLE IF NOT EXISTS product_units (product_id text NOT NULL REFERENCES products(id), order_unit text NOT NULL, billing_unit text NOT NULL, PRIMARY KEY(product_id,order_unit));
 CREATE TABLE IF NOT EXISTS prices (product_id text NOT NULL REFERENCES products(id), billing_unit text NOT NULL, amount numeric(12,2) CHECK(amount>=0), PRIMARY KEY(product_id,billing_unit));
 CREATE TABLE IF NOT EXISTS orders (id text PRIMARY KEY, restaurant_id text NOT NULL REFERENCES restaurants(id), restaurant_name text NOT NULL, delivery_date date NOT NULL, urgent boolean NOT NULL DEFAULT false, picking_started_at timestamptz, version integer NOT NULL DEFAULT 1, created_at timestamptz NOT NULL DEFAULT now());
-CREATE UNIQUE INDEX IF NOT EXISTS restaurant_date_unique ON orders(restaurant_id,delivery_date);
 CREATE TABLE IF NOT EXISTS order_items (id text PRIMARY KEY, order_id text NOT NULL REFERENCES orders(id) ON DELETE CASCADE, product_id text NOT NULL REFERENCES products(id), product_name text NOT NULL, zone_id text NOT NULL REFERENCES zones(id), position integer NOT NULL, ordered_quantity numeric(12,3) NOT NULL CHECK(ordered_quantity>0), ordered_unit text NOT NULL, billing_unit text NOT NULL, price_snapshot numeric(12,2), actual_quantity numeric(12,3) CHECK(actual_quantity>=0), actual_unit text, actual_confirmed boolean NOT NULL DEFAULT false, unavailable boolean NOT NULL DEFAULT false, amount numeric(14,2), version integer NOT NULL DEFAULT 1, updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS picking_tasks (id text PRIMARY KEY, order_item_id text NOT NULL UNIQUE REFERENCES order_items(id) ON DELETE CASCADE, state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','picked','unavailable')), completed_by text REFERENCES users(id), updated_at timestamptz NOT NULL DEFAULT now(), version integer NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS change_records (id text PRIMARY KEY, actor_id text REFERENCES users(id), action text NOT NULL, entity_id text NOT NULL, details jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS change_entity_latest_idx ON change_records(entity_id,created_at DESC,id DESC);
 CREATE TABLE IF NOT EXISTS operation_requests (key text PRIMARY KEY, actor_id text NOT NULL REFERENCES users(id), payload_hash text NOT NULL, response jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS orders_date_idx ON orders(delivery_date);
 CREATE INDEX IF NOT EXISTS items_order_idx ON order_items(order_id);
@@ -79,11 +82,25 @@ CREATE TABLE IF NOT EXISTS restore_previews (
  id text PRIMARY KEY,actor_id text NOT NULL REFERENCES users(id),payload jsonb NOT NULL,state_hash text NOT NULL,expires_at timestamptz NOT NULL
 );
 INSERT INTO schema_version VALUES (3) ON CONFLICT DO NOTHING;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS can_import boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS can_finalize boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+UPDATE users SET username='owner' WHERE id=(SELECT id FROM users WHERE role IN ('owner','admin') ORDER BY created_at,id LIMIT 1) AND username IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS user_login_unique ON users(lower(username)) WHERE username IS NOT NULL;
+ALTER TABLE shop ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS app_state (id integer PRIMARY KEY CHECK(id=1), generation text NOT NULL DEFAULT md5(random()::text || clock_timestamp()::text));
+INSERT INTO app_state(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE SEQUENCE IF NOT EXISTS restaurant_price_version;
+SELECT setval('restaurant_price_version',greatest((SELECT last_value FROM restaurant_price_version),coalesce((SELECT max(version) FROM restaurant_prices),1)),true);
 `;
 
 declare global {
   var shopDatabase: Promise<PGlite> | undefined;
   var shopDatabaseSchema: number | undefined;
+  var shopDatabaseGuards: WeakSet<PGlite> | undefined;
+  var shopDatabaseLocks: WeakSet<PGlite> | undefined;
 }
 export async function getDb() {
   if (
@@ -97,9 +114,56 @@ export async function getDb() {
         process.env.SHOP_DATA_DIR ??
         path.join(process.cwd(), "data", "postgres");
       await mkdir(directory, { recursive: true });
+      const locks = (globalThis.shopDatabaseLocks ??= new WeakSet<PGlite>());
+      const old = prior ? await prior : null;
+      const release =
+        old && locks.has(old) ? null : await acquireDatabaseLock(directory);
       const db = prior ? await prior : new PGlite(directory);
       await db.waitReady;
       await db.exec(schema);
+      if (release) {
+        locks.add(db);
+        const close = db.close.bind(db);
+        let stopBackup = () => {};
+        db.close = async () => {
+          stopBackup();
+          await close();
+          await release();
+        };
+        if (process.env.SHOP_AUTO_BACKUP === "true") {
+          const timer = setTimeout(() => {
+            void import("./scheduled-backup.server").then(
+              ({ startScheduledBackups }) => {
+                stopBackup = startScheduledBackups();
+              },
+            );
+          }, 0);
+          timer.unref();
+        }
+      }
+      const guarded = (globalThis.shopDatabaseGuards ??= new WeakSet<PGlite>());
+      if (!guarded.has(db)) {
+        guarded.add(db);
+        const transaction = db.transaction.bind(db);
+        db.transaction = ((callback: (tx: Transaction) => Promise<unknown>) =>
+          transaction(async (tx) => {
+            const token = requestSession.getStore();
+            if (
+              token !== undefined &&
+              !(
+                await tx.query(
+                  "SELECT s.token_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active=true AND u.role IN ('owner','admin','staff')",
+                  [token],
+                )
+              ).rows.length
+            )
+              throw new AppError(
+                "登录已失效，请重新登录；未提交输入仍保留",
+                401,
+              );
+            return callback(tx);
+          })) as typeof db.transaction;
+      }
       return db;
     })().catch((error) => {
       globalThis.shopDatabase = undefined;
