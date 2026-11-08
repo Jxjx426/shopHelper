@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { failure, requireUser } from "@/lib/http";
 import { documentPdf } from "@/lib/documents.server";
+import { presentedDocumentPdf } from "@/lib/document-export.server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(
@@ -9,7 +10,10 @@ export async function GET(
 ) {
   try {
     await requireUser(request);
-    const result = await documentPdf((await context.params).id);
+    const id = (await context.params).id;
+    const result = await (request.nextUrl.searchParams.get("original") === "1"
+      ? documentPdf(id)
+      : presentedDocumentPdf(id));
     return new NextResponse(new Uint8Array(result.bytes), {
       headers: {
         "Content-Type": "application/pdf",

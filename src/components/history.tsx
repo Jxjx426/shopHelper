@@ -56,6 +56,8 @@ export default function History({
   } | null>(null);
   const [localError, setLocalError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [copy, setCopy] = useState(false);
   const [date, setDate] = useState(data.date);
@@ -97,6 +99,43 @@ export default function History({
       setLocalError((e as Error).message);
     }
   }
+  async function exportPdf() {
+    setExporting(true);
+    setLocalError("");
+    setExportMessage("");
+    try {
+      const params = new URLSearchParams({
+        from: filter.from,
+        to: filter.to,
+        query: filter.query,
+      });
+      const response = await fetch(`/api/documents/export?${params}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok)
+        throw new Error((await response.json()).error ?? "导出失败，请重试");
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Order-List-${filter.from}-${filter.to}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setExportMessage(
+        `已导出 ${response.headers.get("X-Order-Count") ?? ""} 份已定稿单据`,
+      );
+    } catch (e) {
+      setLocalError(
+        (e as Error).name === "TimeoutError"
+          ? "合并超时，请缩短日期范围后重试"
+          : (e as Error).message,
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
   return (
     <Modal title="历史订单" wide onClose={onClose}>
       <form
@@ -106,7 +145,7 @@ export default function History({
           setApplied({ ...filter });
         }}
       >
-        <Field label="餐馆名称">
+        <Field label="餐馆名称（留空为全部）">
           <input
             value={filter.query}
             onChange={(e) => setFilter({ ...filter, query: e.target.value })}
@@ -118,7 +157,16 @@ export default function History({
             <input
               type="date"
               value={filter.from}
-              onChange={(e) => setFilter({ ...filter, from: e.target.value })}
+              onChange={(e) =>
+                setFilter({
+                  ...filter,
+                  from: e.target.value,
+                  to:
+                    !filter.to || filter.to === filter.from
+                      ? e.target.value
+                      : filter.to,
+                })
+              }
             />
           </Field>
           <Field label="到日期">
@@ -139,9 +187,38 @@ export default function History({
           />
           查看已删除订单
         </label>
-        <button className="primary" disabled={loading}>
-          查询
-        </button>
+        <div className="action-wrap">
+          <button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              setFilter({ ...filter, from: data.date, to: data.date })
+            }
+          >
+            仅选当天
+          </button>
+          <button className="primary" disabled={loading}>
+            查询
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={
+              exporting || !filter.from || !filter.to || filter.from > filter.to
+            }
+            onClick={() => void exportPdf()}
+          >
+            {exporting ? "正在合并…" : "合并 PDF"}
+          </button>
+        </div>
+        <p className="fine-print">
+          选同一天或日期范围，仅合并最新已定稿单据；已删除单据不包括在内。
+        </p>
+        {exportMessage && (
+          <p className="saved-label" role="status">
+            {exportMessage}
+          </p>
+        )}
       </form>
       <ErrorText message={localError || error} />
       {loading && <p>正在读取…</p>}
