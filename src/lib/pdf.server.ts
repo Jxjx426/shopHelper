@@ -97,15 +97,25 @@ export async function renderDeliveryPdf(
         ? item.unavailable
           ? "—"
           : "待定价"
-        : `RM ${item.price}\n/ ${item.billingUnit}`,
+        : `RM ${item.price} / ${item.billingUnit}`,
       item.amount ?? "待确认",
     ];
+    const sizes = values.map((value, i) => {
+      let size = 11;
+      if (i === 2)
+        while (
+          size > 8 &&
+          doc.fontSize(size).widthOfString(value) > cols[i].w - 14
+        )
+          size -= 0.5;
+      return size;
+    });
     const height = Math.max(
       42,
       ...values.map(
         (v, i) =>
           doc
-            .fontSize(11)
+            .fontSize(sizes[i])
             .heightOfString(v, { width: cols[i].w - 14, lineGap: 3 }) + 18,
       ),
     );
@@ -119,7 +129,7 @@ export async function renderDeliveryPdf(
         cols[i].x + 7,
         y + 8,
         cols[i].w - 14,
-        11,
+        sizes[i],
         i === 3 ? "right" : "left",
       ),
     );
