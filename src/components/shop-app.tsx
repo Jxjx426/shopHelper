@@ -260,9 +260,9 @@ export default function ShopApp() {
             </form>
           )}
           <div className="edition-note">
-            第 1 阶段 · 本地手动测试版
+            第 2 阶段 · 本地订单审核版
             <br />
-            订单保存在本机服务端，不会发送给 AI
+            订单保存在本机；AI 导入需先阅读数据说明并确认
           </div>
         </div>
       </main>
@@ -301,7 +301,7 @@ export default function ShopApp() {
         <div className="side-bottom">
           <div className="local-badge">
             <span />
-            本地手动测试版
+            本地订单审核版
           </div>
           <p>
             先把每一份鲜货配好。
@@ -413,6 +413,7 @@ export default function ShopApp() {
             </div>
           ) : tab === "orders" ? (
             <Orders
+              onReload={() => load(date)}
               data={viewData}
               mutate={mutate}
               busy={busy}
@@ -444,7 +445,7 @@ export default function ShopApp() {
           )}
         </main>
         <footer className="workspace-footer">
-          <Leaf size={16} /> 鲜配助手 · 第 1 阶段
+          <Leaf size={16} /> 鲜配助手 · 第 2 阶段
           <span>手动录单 · 配货 · 称重</span>
         </footer>
       </div>

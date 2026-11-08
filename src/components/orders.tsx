@@ -21,6 +21,7 @@ import {
 import type { ViewProps } from "./types";
 import { clientId } from "@/lib/client-id";
 import { Empty, ErrorText, Field, Modal, Progress } from "./ui";
+import ImportFlow, { DraftImports } from "./import-flow";
 type DraftLine = {
   key: string;
   productId: string;
@@ -342,10 +343,16 @@ function OrderEditor({
   );
 }
 
-export default function Orders(props: ViewProps & { onSettings: () => void }) {
+export default function Orders(
+  props: ViewProps & { onSettings: () => void; onReload: () => Promise<void> },
+) {
   const { data, mutate, busy, onSettings } = props;
   const [editor, setEditor] = useState<Order | "new" | null>(null);
   const [filter, setFilter] = useState("");
+  const [importing, setImporting] = useState<{ id: string | null } | null>(
+    null,
+  );
+  const [draftRefresh, setDraftRefresh] = useState(0);
   const items = data.orders.flatMap((o) => o.items);
   const canCreate =
     data.restaurants.some((r) => r.active) &&
@@ -364,14 +371,24 @@ export default function Orders(props: ViewProps & { onSettings: () => void }) {
             一家餐馆，一份清楚的订单
           </p>
         </div>
-        <button
-          className="primary"
-          onClick={() => setEditor("new")}
-          disabled={!canCreate || busy}
-        >
-          <Plus size={23} />
-          新增订单
-        </button>
+        <div className="order-entry-actions">
+          <button
+            className="primary"
+            disabled={busy || !data.restaurants.some((r) => r.active)}
+            onClick={() => setImporting({ id: null })}
+          >
+            <Plus size={22} />
+            导入订单
+          </button>
+          <button
+            className="secondary"
+            onClick={() => setEditor("new")}
+            disabled={!canCreate || busy}
+          >
+            <Plus size={23} />
+            手动新增
+          </button>
+        </div>
       </div>
       <div className="stats-grid">
         <div className="stat">
@@ -399,6 +416,11 @@ export default function Orders(props: ViewProps & { onSettings: () => void }) {
           <ScaleIcon />
         </div>
       </div>
+      <DraftImports
+        date={data.date}
+        refresh={draftRefresh}
+        onOpen={(id) => setImporting({ id })}
+      />
       {!canCreate && (
         <section className="setup-card">
           <div className="setup-number">1</div>
@@ -531,8 +553,23 @@ export default function Orders(props: ViewProps & { onSettings: () => void }) {
         </>
       )}
       <div className="stage-note">
-        本阶段使用手动录单。粘贴文字和截图识别将在第 2 阶段加入。
+        文字与截图识别只生成待审核草稿。必须逐项核对并最终确认，才会进入配货清单。
       </div>
+      {importing && (
+        <ImportFlow
+          {...props}
+          draftId={importing.id}
+          onClose={() => {
+            setImporting(null);
+            setDraftRefresh((v) => v + 1);
+          }}
+          onComplete={async () => {
+            await props.onReload();
+            setImporting(null);
+            setDraftRefresh((v) => v + 1);
+          }}
+        />
+      )}
       {editor && (
         <OrderEditor
           {...props}

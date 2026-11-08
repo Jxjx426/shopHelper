@@ -206,7 +206,7 @@ export async function workspace(selectedDate: string): Promise<Workspace> {
   });
 }
 
-async function apply(
+export async function apply(
   tx: Transaction,
   actor: string,
   a: Action,
@@ -610,16 +610,23 @@ export async function exportBackup() {
       "order_items",
       "picking_tasks",
       "change_records",
+      "import_drafts",
+      "extraction_attempts",
     ])
       tables[table] = (
         await tx.query(
-          `SELECT *${table === "orders" ? ",delivery_date::text AS delivery_date" : ""} FROM ${table}`,
+          `SELECT *${table === "orders" || table === "import_drafts" ? ",delivery_date::text AS delivery_date" : ""} FROM ${table}`,
         )
       ).rows;
+    tables.import_images = (
+      await tx.query(
+        "SELECT draft_id,original_mime,encode(original_image,'base64') original_base64,prepared_mime,encode(prepared_image,'base64') prepared_base64 FROM import_images",
+      )
+    ).rows;
     const actors = (await tx.query("SELECT id,name,role FROM users")).rows;
     return {
-      format: "fresh-helper-stage1",
-      schemaVersion: 1,
+      format: "fresh-helper-stage2",
+      schemaVersion: 2,
       exportedAt: new Date().toISOString(),
       timezone: "Asia/Kuala_Lumpur",
       actors,

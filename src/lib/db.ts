@@ -25,19 +25,46 @@ CREATE TABLE IF NOT EXISTS change_records (id text PRIMARY KEY, actor_id text RE
 CREATE TABLE IF NOT EXISTS operation_requests (key text PRIMARY KEY, actor_id text NOT NULL REFERENCES users(id), payload_hash text NOT NULL, response jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS orders_date_idx ON orders(delivery_date);
 CREATE INDEX IF NOT EXISTS items_order_idx ON order_items(order_id);
+CREATE TABLE IF NOT EXISTS import_drafts (
+ id text PRIMARY KEY, created_by text NOT NULL REFERENCES users(id), restaurant_id text NOT NULL REFERENCES restaurants(id),
+ delivery_date date NOT NULL, source_kind text NOT NULL CHECK(source_kind IN ('text','image')), original_text text NOT NULL DEFAULT '', source_hash text NOT NULL,
+ status text NOT NULL DEFAULT 'draft', lines jsonb NOT NULL DEFAULT '[]', detected_restaurant text,
+ restaurant_acknowledged boolean NOT NULL DEFAULT false, source_checked boolean NOT NULL DEFAULT false,
+ error_message text, extraction_warning boolean NOT NULL DEFAULT false, version integer NOT NULL DEFAULT 1,
+ preview jsonb, confirmed_order_id text REFERENCES orders(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS import_images (
+ draft_id text PRIMARY KEY REFERENCES import_drafts(id), original_image bytea NOT NULL, original_mime text NOT NULL,
+ prepared_image bytea NOT NULL, prepared_mime text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS extraction_attempts (
+ id text PRIMARY KEY, draft_id text NOT NULL REFERENCES import_drafts(id), actor_id text NOT NULL REFERENCES users(id), request_key text NOT NULL UNIQUE,
+ provider text NOT NULL, model text NOT NULL, prompt_version text NOT NULL, schema_version integer NOT NULL,
+ status text NOT NULL DEFAULT 'pending', error_code text, quota_day text NOT NULL, started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS extraction_cooldown (id integer PRIMARY KEY CHECK(id=1), until_at timestamptz NOT NULL);
+CREATE INDEX IF NOT EXISTS import_date_idx ON import_drafts(delivery_date,created_by);
+CREATE INDEX IF NOT EXISTS import_hash_idx ON import_drafts(source_hash,restaurant_id,delivery_date);
+CREATE INDEX IF NOT EXISTS attempt_started_idx ON extraction_attempts(started_at);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS original_text text;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS source_refs jsonb NOT NULL DEFAULT '[]';
+INSERT INTO schema_version VALUES (2) ON CONFLICT DO NOTHING;
 `;
 
 declare global {
   var shopDatabase: Promise<PGlite> | undefined;
+  var shopDatabaseSchema: number | undefined;
 }
 export async function getDb() {
-  if (!globalThis.shopDatabase)
+  if (!globalThis.shopDatabase || globalThis.shopDatabaseSchema !== 2) {
+    const prior = globalThis.shopDatabase;
+    globalThis.shopDatabaseSchema = 2;
     globalThis.shopDatabase = (async () => {
       const directory =
         process.env.SHOP_DATA_DIR ??
         path.join(process.cwd(), "data", "postgres");
       await mkdir(directory, { recursive: true });
-      const db = new PGlite(directory);
+      const db = prior ? await prior : new PGlite(directory);
       await db.waitReady;
       await db.exec(schema);
       return db;
@@ -45,6 +72,7 @@ export async function getDb() {
       globalThis.shopDatabase = undefined;
       throw error;
     });
+  }
   return globalThis.shopDatabase;
 }
 export type Database = Awaited<ReturnType<typeof getDb>>;

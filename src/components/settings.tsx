@@ -98,7 +98,7 @@ function BasicEditor({
         {editor.kind === "restaurant" && (
           <Field
             label="已确认别名（选填）"
-            hint="每行一个，或用逗号分隔。可在下一阶段用于名称匹配。"
+            hint="每行一个，或用逗号分隔。用于导入时核对餐馆名称。"
           >
             <textarea
               value={aliases}
@@ -146,13 +146,20 @@ function BasicEditor({
   );
 }
 
-function ProductEditor({
+export function ProductEditor({
   product,
+  initialName,
+  onSaved,
   onClose,
   ...props
-}: ViewProps & { product?: Product; onClose: () => void }) {
+}: ViewProps & {
+  product?: Product;
+  onClose: () => void;
+  initialName?: string;
+  onSaved?: (name: string) => void;
+}) {
   const { data, mutate, busy, error } = props;
-  const [name, setName] = useState(product?.name ?? "");
+  const [name, setName] = useState(product?.name ?? initialName ?? "");
   const [aliases, setAliases] = useState(product?.aliases.join("\n") ?? "");
   const [zoneId, setZoneId] = useState(
     product?.zone_id ?? data.zones.find((z) => z.active)?.id ?? "",
@@ -201,8 +208,10 @@ function ProductEditor({
         },
         "商品与标准价格已保存，现有订单保留原价",
       )
-    )
+    ) {
+      onSaved?.(name.trim());
       onClose();
+    }
   }
   return (
     <Modal
@@ -827,10 +836,11 @@ export default function ShopSettings(
             </div>
           </section>
           <section className="panel">
-            <h2>第 1 阶段范围</h2>
+            <h2>第 2 阶段范围</h2>
             <p>已提供手动订单、两种配货视图、称重和基本计费。</p>
             <p>
-              Gemini 导入、PDF 定稿、历史复制删除、四人同步和任务分配尚未启用。
+              文字与截图可用 Gemini 提取，再由人工审核。PDF
+              定稿、历史复制删除、四人同步和任务分配尚未启用。
             </p>
           </section>
         </div>
