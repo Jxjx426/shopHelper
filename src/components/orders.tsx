@@ -1,4 +1,5 @@
 "use client";
+import History from "./history";
 import { useEffect, useState } from "react";
 import {
   Plus,
@@ -344,7 +345,11 @@ function OrderEditor({
 }
 
 export default function Orders(
-  props: ViewProps & { onSettings: () => void; onReload: () => Promise<void> },
+  props: ViewProps & {
+    onSettings: () => void;
+    onReload: () => Promise<void>;
+    onDateChange: (date: string) => void;
+  },
 ) {
   const { data, mutate, busy, onSettings } = props;
   const [editor, setEditor] = useState<Order | "new" | null>(null);
@@ -353,6 +358,7 @@ export default function Orders(
     null,
   );
   const [draftRefresh, setDraftRefresh] = useState(0);
+  const [history, setHistory] = useState(false);
   const items = data.orders.flatMap((o) => o.items);
   const canCreate =
     data.restaurants.some((r) => r.active) &&
@@ -364,7 +370,6 @@ export default function Orders(
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">每日工作，从订单开始</p>
           <h1>今日订单</h1>
           <p>
             {data.date} <span className="dot-separator">·</span>{" "}
@@ -372,6 +377,9 @@ export default function Orders(
           </p>
         </div>
         <div className="order-entry-actions">
+          <button className="secondary" onClick={() => setHistory(true)}>
+            历史订单
+          </button>
           <button
             className="primary"
             disabled={busy || !data.restaurants.some((r) => r.active)}
@@ -552,9 +560,13 @@ export default function Orders(
           )}
         </>
       )}
-      <div className="stage-note">
-        文字与截图识别只生成待审核草稿。必须逐项核对并最终确认，才会进入配货清单。
-      </div>
+      {history && (
+        <History
+          {...props}
+          onClose={() => setHistory(false)}
+          onDateChange={props.onDateChange}
+        />
+      )}
       {importing && (
         <ImportFlow
           {...props}

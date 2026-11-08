@@ -21,7 +21,7 @@ body {
   color: var(--ink);
   font-family:
     "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale));
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
 }
@@ -60,24 +60,24 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: 32px;
+  font-size: calc(32px * var(--font-scale));
   line-height: 1.4;
   letter-spacing: 0.025em;
   font-weight: 750;
 }
 h2 {
-  font-size: 22px;
+  font-size: calc(22px * var(--font-scale));
   line-height: 1.5;
 }
 h3 {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
   line-height: 1.5;
 }
 strong {
   font-weight: 700;
 }
 small {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
 }
 button:focus-visible,
 a:focus-visible,
@@ -189,7 +189,7 @@ input[type="date"] {
   padding: 8px 4px;
   background: transparent;
   color: var(--green);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 600;
   min-height: 48px;
 }
@@ -210,7 +210,7 @@ input[type="date"] {
   flex-direction: column;
   gap: 7px;
   margin-bottom: 19px;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 650;
 }
 .field small {
@@ -222,7 +222,7 @@ input[type="date"] {
 .field select,
 .field textarea {
   font-weight: 450;
-  font-size: 19px;
+  font-size: calc(19px * var(--font-scale));
 }
 .check-line {
   display: flex;
@@ -230,19 +230,19 @@ input[type="date"] {
   gap: 12px;
   min-height: 50px;
   cursor: pointer;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
 }
 .muted,
 .fine-print {
   color: var(--muted);
 }
 .fine-print {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   line-height: 1.75;
   margin: 12px 0;
 }
 .eyebrow {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 650;
   color: var(--green);
   letter-spacing: 0.12em;
@@ -261,7 +261,7 @@ input[type="date"] {
   border-radius: 7px;
   padding: 4px 10px;
   line-height: 1.55;
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 650;
   white-space: nowrap;
 }
@@ -288,7 +288,7 @@ input[type="date"] {
 }
 .section-heading > span {
   color: var(--muted);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .section-heading:first-child {
   margin-top: 0;
@@ -309,7 +309,7 @@ input[type="date"] {
   color: #4c6546;
   border: 1px solid #dce5d5;
   border-radius: 9px;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   padding: 12px 15px;
   line-height: 1.7;
   margin: 14px 0;
@@ -320,12 +320,12 @@ input[type="date"] {
   border: 1px solid #efcfc7;
   border-radius: 9px;
   padding: 12px 15px;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   margin: 14px 0;
 }
 .stage-note {
   color: var(--muted);
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   margin: 26px 0 8px;
   line-height: 1.8;
   padding-left: 13px;
@@ -363,20 +363,20 @@ input[type="date"] {
 }
 .brand strong {
   display: block;
-  font-size: 23px;
+  font-size: calc(23px * var(--font-scale));
   line-height: 1.4;
   letter-spacing: 0.04em;
 }
 .brand span {
   display: block;
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   max-width: 145px;
   overflow-wrap: anywhere;
   margin-top: 5px;
 }
 .side-label {
-  font-size: 12px;
+  font-size: calc(16px * var(--font-scale));
   color: #798978;
   letter-spacing: 0.13em;
   margin: 13px 15px;
@@ -397,7 +397,7 @@ input[type="date"] {
   color: #52664e;
   text-align: left;
   border-radius: 11px;
-  font-size: 19px;
+  font-size: calc(19px * var(--font-scale));
   font-weight: 600;
 }
 .desktop-nav button.active {
@@ -421,7 +421,7 @@ input[type="date"] {
   padding: 24px 6px 0;
 }
 .side-bottom p {
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   line-height: 1.8;
   color: var(--muted);
   margin: 12px 0;
@@ -430,7 +430,7 @@ input[type="date"] {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 600;
   color: var(--green);
 }
@@ -475,7 +475,7 @@ input[type="date"] {
 .date-caption {
   white-space: nowrap;
   flex-shrink: 0;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin-right: 13px;
   font-weight: 600;
@@ -498,13 +498,13 @@ input[type="date"] {
   width: 181px;
   min-height: 48px;
   border: none;
-  font-size: 19px;
+  font-size: calc(19px * var(--font-scale));
   font-weight: 650;
   padding: 7px 3px;
   background: transparent;
 }
 .date-control .today-button {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   min-width: 54px;
   border: 1px solid var(--line);
   margin-left: 8px;
@@ -513,7 +513,7 @@ input[type="date"] {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   white-space: nowrap;
 }
@@ -534,7 +534,7 @@ input[type="date"] {
 }
 .page-heading h1 + p {
   color: var(--muted);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   margin-top: 9px;
 }
 .page-marker {
@@ -542,14 +542,14 @@ input[type="date"] {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   white-space: nowrap;
   background: #edf2e8;
   padding: 10px 14px;
   border-radius: 9px;
 }
 .workspace-footer {
-  font-size: 12px;
+  font-size: calc(16px * var(--font-scale));
   color: #798777;
   border-top: 1px solid var(--line);
   display: flex;
@@ -572,7 +572,7 @@ input[type="date"] {
   padding: 14px 17px;
   border-radius: 10px;
   margin-bottom: 23px;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   border: 1px solid;
 }
 .notice > svg {
@@ -589,7 +589,7 @@ input[type="date"] {
   gap: 7px;
   align-items: center;
   min-height: 48px;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
 }
 .notice.success {
   background: #eaf4e6;
@@ -617,18 +617,18 @@ input[type="date"] {
 }
 .stat > span {
   display: block;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin-bottom: 8px;
 }
 .stat > strong {
-  font-size: 32px;
+  font-size: calc(32px * var(--font-scale));
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
   color: var(--green);
 }
 .stat strong small {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 500;
   color: var(--muted);
 }
@@ -650,7 +650,7 @@ input[type="date"] {
   max-width: 320px;
 }
 .count-bubble {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   background: #e5eddf;
   color: var(--green);
   border-radius: 20px;
@@ -671,7 +671,7 @@ input[type="date"] {
   min-width: 0;
 }
 .order-card > .muted {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   margin: 8px 0 17px;
 }
 .urgency-button {
@@ -682,7 +682,7 @@ input[type="date"] {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   padding: 6px 10px;
   color: var(--muted);
   white-space: nowrap;
@@ -699,7 +699,7 @@ input[type="date"] {
   padding-bottom: 19px;
   margin-bottom: 18px;
   border-bottom: 1px dashed var(--line);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .order-products > span {
   display: flex;
@@ -712,7 +712,7 @@ input[type="date"] {
   white-space: nowrap;
 }
 .order-products small {
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
 }
 .progress-wrap {
@@ -724,13 +724,13 @@ input[type="date"] {
   align-items: center;
   justify-content: space-between;
   gap: 15px;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin-bottom: 8px;
 }
 .progress-label strong {
   color: var(--green);
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   font-variant-numeric: tabular-nums;
 }
 .progress-wrap progress {
@@ -761,10 +761,10 @@ input[type="date"] {
   justify-content: space-between;
   gap: 8px;
   margin: 17px 0;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .order-card-bottom strong {
-  font-size: 19px;
+  font-size: calc(19px * var(--font-scale));
 }
 .setup-card {
   border: 1px solid #d8dfc7;
@@ -788,10 +788,10 @@ input[type="date"] {
   font-weight: 700;
 }
 .setup-card h2 {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
 }
 .setup-card p {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin-top: 4px;
 }
@@ -823,10 +823,10 @@ input[type="date"] {
   margin-bottom: 7px;
 }
 .empty h2 {
-  font-size: 23px;
+  font-size: calc(23px * var(--font-scale));
 }
 .empty p {
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   max-width: 450px;
   color: var(--muted);
 }
@@ -843,7 +843,7 @@ input[type="date"] {
   color: var(--muted);
 }
 .loading-card h2 {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
 }
 .spin {
   animation: spin 1.4s linear infinite;
@@ -885,7 +885,7 @@ input[type="date"] {
   z-index: 2;
 }
 .modal-header h2 {
-  font-size: 22px;
+  font-size: calc(22px * var(--font-scale));
 }
 .modal-body {
   padding: 24px;
@@ -912,11 +912,11 @@ input[type="date"] {
   padding: 11px 14px;
   margin-bottom: 20px;
   color: var(--green);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .context-strip span {
   margin-left: auto;
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
 }
 .entry-card {
   padding: 14px 17px 13px;
@@ -928,13 +928,13 @@ input[type="date"] {
   margin-bottom: 12px;
 }
 .entry-card .card-heading > strong {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
   display: flex;
   gap: 10px;
   align-items: center;
 }
 .row-number {
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   width: 24px;
   height: 24px;
@@ -953,7 +953,7 @@ input[type="date"] {
   margin-bottom: 7px;
 }
 .item-meta {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   display: flex;
   gap: 8px;
@@ -990,7 +990,7 @@ input[type="date"] {
   padding: 10px 13px;
   color: var(--green);
   text-align: left;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   min-height: 64px;
 }
 .product-option span {
@@ -1000,14 +1000,14 @@ input[type="date"] {
 .product-option small {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(16px * var(--font-scale));
   margin-top: 2px;
 }
 .product-option svg {
   flex-shrink: 0;
 }
 .draft-note {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin: 16px 0;
 }
@@ -1026,7 +1026,7 @@ input[type="date"] {
   max-width: 650px;
 }
 .picking-summary > .muted {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   white-space: nowrap;
   margin-top: 20px;
   margin-left: auto;
@@ -1058,7 +1058,7 @@ input[type="date"] {
   background: transparent;
   border-radius: 8px;
   color: var(--muted);
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 600;
 }
 .segmented .selected {
@@ -1073,7 +1073,7 @@ input[type="date"] {
   flex-wrap: wrap;
 }
 .filter-group .check-line {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .zone-section {
   margin-bottom: 30px;
@@ -1092,7 +1092,7 @@ input[type="date"] {
   min-width: 0;
 }
 .zone-name h2 {
-  font-size: 22px;
+  font-size: calc(22px * var(--font-scale));
   overflow-wrap: anywhere;
 }
 .zone-icon {
@@ -1122,17 +1122,17 @@ input[type="date"] {
   border-bottom: 1px solid var(--line);
 }
 .product-group-header h3 {
-  font-size: 21px;
+  font-size: calc(21px * var(--font-scale));
 }
 .product-group-header > span {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   text-align: right;
 }
 .product-group-header strong {
   margin-left: 9px;
   color: var(--green);
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
 }
 .pick-row {
   padding: 13px 22px;
@@ -1156,7 +1156,7 @@ input[type="date"] {
   min-width: 0;
 }
 .pick-label strong {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
   overflow-wrap: anywhere;
 }
 .pick-subtext {
@@ -1164,7 +1164,7 @@ input[type="date"] {
   gap: 12px;
   flex-wrap: wrap;
   color: var(--muted);
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   margin-top: 2px;
 }
 .pick-row.done {
@@ -1181,7 +1181,7 @@ input[type="date"] {
   align-items: center;
   gap: 2px;
   color: var(--amber);
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
 }
 .pick-quantity {
   text-align: right;
@@ -1189,15 +1189,15 @@ input[type="date"] {
 }
 .pick-quantity > strong {
   display: block;
-  font-size: 24px;
+  font-size: calc(24px * var(--font-scale));
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 .pick-quantity small {
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
 }
 .pick-quantity .text-button {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   min-height: 48px;
   padding: 7px 2px;
 }
@@ -1215,7 +1215,7 @@ input[type="date"] {
   box-shadow: 0 2px 9px #35582a0a;
 }
 .restaurant-select-card > p {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin: 8px 0 20px;
 }
@@ -1225,11 +1225,11 @@ input[type="date"] {
   justify-content: space-between;
   gap: 10px;
   margin-top: 20px;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
 }
 .restaurant-amount strong {
-  font-size: 23px;
+  font-size: calc(23px * var(--font-scale));
   color: var(--green);
 }
 .weighing-summary {
@@ -1250,10 +1250,10 @@ input[type="date"] {
   margin-bottom: 24px;
 }
 .restaurant-banner h2 {
-  font-size: 25px;
+  font-size: calc(25px * var(--font-scale));
 }
 .restaurant-banner > div > span {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   color: #d0e2d4;
 }
 .restaurant-banner > .progress-wrap {
@@ -1290,7 +1290,7 @@ input[type="date"] {
   display: flex;
   gap: 8px 18px;
   flex-wrap: wrap;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin: 14px 0 17px;
   padding-bottom: 15px;
@@ -1298,7 +1298,7 @@ input[type="date"] {
 }
 .weigh-details strong {
   color: var(--ink);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   margin-left: 5px;
   white-space: nowrap;
 }
@@ -1311,7 +1311,7 @@ input[type="date"] {
   margin-bottom: 11px;
 }
 .actual-entry input {
-  font-size: 27px;
+  font-size: calc(27px * var(--font-scale));
   min-height: 61px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -1327,11 +1327,11 @@ input[type="date"] {
   margin: 12px 0 18px;
 }
 .amount-row > span {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
 }
 .amount-row > strong {
-  font-size: 26px;
+  font-size: calc(26px * var(--font-scale));
   color: var(--green);
   font-variant-numeric: tabular-nums;
 }
@@ -1342,12 +1342,12 @@ input[type="date"] {
 }
 .weigh-actions > .primary {
   flex: 1;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   padding: 11px 10px;
 }
 .weigh-actions > .secondary {
   padding: 11px 12px;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
 }
 .weigh-actions svg {
   flex-shrink: 0;
@@ -1362,18 +1362,18 @@ input[type="date"] {
   padding-top: 10px;
 }
 .price-footer > span {
-  font-size: 12px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   line-height: 1.7;
   max-width: 70%;
 }
 .price-footer .text-button {
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   gap: 5px;
   flex-shrink: 0;
 }
 .saved-label {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   color: #447b39;
   margin-top: 12px;
 }
@@ -1387,11 +1387,11 @@ input[type="date"] {
   align-items: center;
   color: var(--amber);
   padding: 15px 0;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 .unavailable-body > strong {
   margin-left: auto;
-  font-size: 23px;
+  font-size: calc(23px * var(--font-scale));
   color: var(--ink);
 }
 .unavailable-body .text-button {
@@ -1411,13 +1411,13 @@ input[type="date"] {
   gap: 15px;
 }
 .subtotal-panel strong {
-  font-size: 32px;
+  font-size: calc(32px * var(--font-scale));
   color: var(--green);
   font-variant-numeric: tabular-nums;
 }
 .subtotal-panel p {
   color: var(--muted);
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   margin-top: 10px;
 }
 .price-change {
@@ -1431,12 +1431,12 @@ input[type="date"] {
   margin: 22px 0;
 }
 .price-change span {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
 }
 .price-change strong {
   display: block;
-  font-size: 23px;
+  font-size: calc(23px * var(--font-scale));
   color: var(--green);
   margin-top: 5px;
 }
@@ -1456,7 +1456,7 @@ input[type="date"] {
   color: var(--muted);
   min-height: 58px;
   padding: 9px 6px;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1465,7 +1465,7 @@ input[type="date"] {
   color: var(--green);
 }
 .settings-tabs button small {
-  font-size: 12px;
+  font-size: calc(16px * var(--font-scale));
   background: #e9eee2;
   padding: 1px 6px;
   border-radius: 5px;
@@ -1509,7 +1509,7 @@ input[type="date"] {
   overflow-wrap: anywhere;
 }
 .catalog-content p {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--muted);
   margin-top: 3px;
   overflow-wrap: anywhere;
@@ -1518,7 +1518,7 @@ input[type="date"] {
   display: flex;
   gap: 5px 13px;
   flex-wrap: wrap;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   color: var(--green);
   margin-top: 8px;
 }
@@ -1537,7 +1537,7 @@ input[type="date"] {
   color: var(--muted);
 }
 .zone-position {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 650;
   color: #7c8f72;
   min-width: 25px;
@@ -1571,11 +1571,11 @@ input[type="date"] {
   flex: 1;
 }
 .unit-rule .field {
-  font-size: 14px;
+  font-size: calc(16px * var(--font-scale));
 }
 .unit-rule .field input,
 .unit-rule .field select {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   padding: 10px 8px;
 }
 .unit-rule > .icon-button {
@@ -1591,7 +1591,7 @@ input[type="date"] {
 }
 .shop-settings .panel > p {
   color: var(--muted);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   margin: 12px 0;
 }
 .shop-settings .panel > .secondary {
@@ -1605,13 +1605,13 @@ input[type="date"] {
   padding-top: 16px;
   border-top: 1px solid var(--line);
   margin-top: 16px;
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
 }
 .setting-detail > span {
   color: var(--muted);
 }
 .setting-detail > strong {
-  font-size: 15px;
+  font-size: calc(16px * var(--font-scale));
   text-align: right;
 }
 .shop-settings .inline-note {
@@ -1640,21 +1640,21 @@ input[type="date"] {
   margin-bottom: 26px;
 }
 .auth-card h1 {
-  font-size: 35px;
+  font-size: calc(35px * var(--font-scale));
 }
 .auth-description {
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   color: var(--muted);
   margin: 15px 0 27px;
 }
 .auth-card .eyebrow {
-  font-size: 12px;
+  font-size: calc(16px * var(--font-scale));
 }
 .edition-note {
   border-top: 1px solid var(--line);
   padding-top: 20px;
   margin-top: 27px;
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale));
   line-height: 1.9;
   color: var(--muted);
 }
@@ -1675,7 +1675,7 @@ input[type="date"] {
     margin-left: 208px;
   }
   .brand strong {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale));
   }
   .brand-symbol {
     width: 42px;
@@ -1717,7 +1717,7 @@ input[type="date"] {
     gap: 13px;
   }
   .settings-tabs button {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
     gap: 6px;
   }
   .order-card {
@@ -1738,7 +1738,7 @@ input[type="date"] {
 }
 @media (max-width: 760px) {
   body {
-    font-size: 18px;
+    font-size: calc(18px * var(--font-scale));
   }
   .sidebar {
     display: none;
@@ -1758,7 +1758,7 @@ input[type="date"] {
     align-items: center;
     gap: 9px;
     color: var(--green);
-    font-size: 18px;
+    font-size: calc(18px * var(--font-scale));
     flex: 1;
     min-width: 0;
   }
@@ -1769,7 +1769,7 @@ input[type="date"] {
     max-width: 240px;
   }
   .topbar .connection {
-    font-size: 11px;
+    font-size: calc(16px * var(--font-scale));
   }
   .date-control {
     display: grid;
@@ -1782,14 +1782,14 @@ input[type="date"] {
   .date-control .date-caption {
     display: block;
     grid-column: 1 / -1;
-    font-size: 12px;
+    font-size: calc(16px * var(--font-scale));
     line-height: 1.3;
     margin: 0;
   }
   .date-control input[type="date"] {
     width: 100%;
     grid-column: 2;
-    font-size: 18px;
+    font-size: calc(18px * var(--font-scale));
   }
   .date-control button {
     min-width: 48px;
@@ -1799,7 +1799,7 @@ input[type="date"] {
     margin-left: 0;
     min-width: 54px;
     width: 54px;
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
   }
   .workspace {
     padding: 25px 18px 28px;
@@ -1811,29 +1811,29 @@ input[type="date"] {
     flex-wrap: wrap;
   }
   .page-heading h1 {
-    font-size: 29px;
+    font-size: calc(29px * var(--font-scale));
   }
   .page-heading > .primary {
     min-height: 50px;
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
     padding: 11px 14px;
     margin-top: 5px;
   }
   .page-heading h1 + p {
-    font-size: 15px;
+    font-size: calc(16px * var(--font-scale));
     margin-top: 7px;
   }
   .eyebrow {
-    font-size: 12px;
+    font-size: calc(16px * var(--font-scale));
     margin-bottom: 5px;
   }
   .workspace-footer {
     margin: 0 18px;
     padding: 17px 0 107px;
-    font-size: 11px;
+    font-size: calc(16px * var(--font-scale));
   }
   .workspace-footer span {
-    font-size: 10px;
+    font-size: calc(16px * var(--font-scale));
   }
   .mobile-nav {
     position: fixed;
@@ -1859,7 +1859,7 @@ input[type="date"] {
     border: 0;
     background: transparent;
     border-radius: 10px;
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
     font-weight: 600;
     line-height: 1.4;
     padding: 5px 1px;
@@ -1877,16 +1877,16 @@ input[type="date"] {
     border-radius: 12px;
   }
   .stat > span {
-    font-size: 12px;
+    font-size: calc(16px * var(--font-scale));
     margin-bottom: 10px;
   }
   .stat > strong {
-    font-size: 26px;
+    font-size: calc(26px * var(--font-scale));
     display: block;
     white-space: nowrap;
   }
   .stat strong small {
-    font-size: 12px;
+    font-size: calc(16px * var(--font-scale));
   }
   .stat > svg {
     display: none;
@@ -1910,11 +1910,11 @@ input[type="date"] {
     flex: 1;
   }
   .setup-card p {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
   }
   .setup-card > .secondary {
     margin-left: 47px;
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
   }
   .list-toolbar {
     gap: 12px;
@@ -1922,7 +1922,7 @@ input[type="date"] {
     margin-top: 22px;
   }
   .list-toolbar h2 {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale));
   }
   .list-toolbar input[type="search"] {
     max-width: none;
@@ -1930,7 +1930,7 @@ input[type="date"] {
     min-width: 130px;
   }
   .list-toolbar > .primary {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
     padding: 11px 13px;
   }
   .empty {
@@ -1938,13 +1938,13 @@ input[type="date"] {
     padding: 35px 20px;
   }
   .empty p {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
   }
   .empty h2 {
-    font-size: 22px;
+    font-size: calc(22px * var(--font-scale));
   }
   .notice {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
     gap: 9px;
     flex-wrap: wrap;
     padding: 12px 13px;
@@ -1956,14 +1956,14 @@ input[type="date"] {
     min-width: 190px;
   }
   .stage-note {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
   }
   .picking-summary {
     padding: 19px 18px;
     gap: 18px;
   }
   .picking-summary > .muted {
-    font-size: 13px;
+    font-size: calc(16px * var(--font-scale));
   }
   .picking-toolbar {
     gap: 12px;
@@ -1974,7 +1974,7 @@ input[type="date"] {
   }
   .segmented button {
     flex: 1;
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
     padding: 10px 18px;
   }
   .filter-group {
@@ -1987,10 +1987,10 @@ input[type="date"] {
     margin-bottom: 13px;
   }
   .zone-name h2 {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale));
   }
   .zone-heading > .tag {
-    font-size: 12px;
+    font-size: calc(16px * var(--font-scale));
   }
   .zone-name {
     gap: 8px;
@@ -2006,15 +2006,15 @@ input[type="date"] {
     flex-wrap: wrap;
   }
   .product-group-header h3 {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale));
   }
   .product-group-header > span {
-    font-size: 13px;
+    font-size: calc(16px * var(--font-scale));
     margin-left: auto;
     align-self: center;
   }
   .product-group-header strong {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
     margin-left: 5px;
   }
   .pick-row {
@@ -2025,17 +2025,17 @@ input[type="date"] {
     gap: 13px;
   }
   .pick-label strong {
-    font-size: 20px;
+    font-size: calc(20px * var(--font-scale));
   }
   .pick-quantity > strong {
-    font-size: 23px;
+    font-size: calc(23px * var(--font-scale));
   }
   .pick-subtext {
-    font-size: 13px;
+    font-size: calc(16px * var(--font-scale));
     gap: 7px;
   }
   .pick-quantity .text-button {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
   }
   .restaurant-banner {
     padding: 20px;
@@ -2048,7 +2048,7 @@ input[type="date"] {
     max-width: none;
   }
   .restaurant-banner h2 {
-    font-size: 25px;
+    font-size: calc(25px * var(--font-scale));
   }
   .weigh-card {
     padding: 19px 17px;
@@ -2058,36 +2058,36 @@ input[type="date"] {
     gap: 17px;
   }
   .weigh-card .card-heading h3 {
-    font-size: 22px;
+    font-size: calc(22px * var(--font-scale));
   }
   .actual-entry {
     grid-template-columns: minmax(0, 1fr) 116px;
     gap: 12px;
   }
   .weigh-details {
-    font-size: 15px;
+    font-size: calc(16px * var(--font-scale));
   }
   .weigh-details strong {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
   }
   .weigh-actions > .primary {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
   }
   .weigh-actions > .secondary {
-    font-size: 15px;
+    font-size: calc(16px * var(--font-scale));
     padding: 11px 12px;
   }
   .price-footer > span {
-    font-size: 12px;
+    font-size: calc(16px * var(--font-scale));
   }
   .subtotal-panel {
     padding: 20px;
   }
   .subtotal-panel > div > span {
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
   }
   .subtotal-panel strong {
-    font-size: 29px;
+    font-size: calc(29px * var(--font-scale));
   }
   .settings-tabs {
     gap: 0;
@@ -2096,7 +2096,7 @@ input[type="date"] {
   }
   .settings-tabs button {
     gap: 5px;
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
     padding: 7px 3px;
     min-height: 58px;
   }
@@ -2116,14 +2116,14 @@ input[type="date"] {
     border-radius: 10px;
   }
   .catalog-content h3 {
-    font-size: 20px;
+    font-size: calc(20px * var(--font-scale));
     gap: 6px;
   }
   .catalog-content p {
-    font-size: 13px;
+    font-size: calc(16px * var(--font-scale));
   }
   .catalog-row > .compact {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
     padding: 10px;
     gap: 5px;
   }
@@ -2131,7 +2131,7 @@ input[type="date"] {
     width: 16px;
   }
   .unit-prices {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale));
     gap: 4px 9px;
   }
   .unit-prices > span {
@@ -2159,7 +2159,7 @@ input[type="date"] {
     gap: 18px;
   }
   .shop-settings .panel > p {
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
   }
   .auth-page {
     padding: 25px 18px;
@@ -2179,7 +2179,7 @@ input[type="date"] {
     padding: 12px 17px;
   }
   .modal-header h2 {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale));
   }
   .modal-body {
     padding: 20px 17px;
@@ -2189,11 +2189,11 @@ input[type="date"] {
   }
   .modal-actions > .primary {
     padding: 12px;
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
   }
   .modal-actions > .secondary {
     padding: 12px 16px;
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
   }
   .quantity-row {
     grid-template-columns: minmax(0, 1fr) 105px;
@@ -2210,11 +2210,11 @@ input[type="date"] {
   }
   .product-option {
     padding: 10px;
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
     gap: 5px;
   }
   .context-strip {
-    font-size: 15px;
+    font-size: calc(16px * var(--font-scale));
     gap: 8px;
     padding: 10px;
   }
@@ -2222,7 +2222,7 @@ input[type="date"] {
     gap: 12px;
   }
   .two-columns .field {
-    font-size: 15px;
+    font-size: calc(16px * var(--font-scale));
   }
   .unit-rule {
     padding: 14px 8px 0 12px;
@@ -2240,14 +2240,14 @@ input[type="date"] {
   }
   .unit-rule .field input,
   .unit-rule .field select {
-    font-size: 17px;
+    font-size: calc(17px * var(--font-scale));
   }
   .price-change {
     padding: 16px;
     gap: 12px;
   }
   .price-change strong {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale));
   }
 }
 @media (max-width: 370px) {
@@ -2255,11 +2255,11 @@ input[type="date"] {
     gap: 2px 4px;
   }
   .date-caption {
-    font-size: 12px !important;
+    font-size: calc(16px * var(--font-scale)) !important;
   }
   .date-control input[type="date"] {
     width: 100%;
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale));
   }
   .date-control button {
     min-width: 48px;

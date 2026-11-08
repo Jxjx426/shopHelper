@@ -1,0 +1,343 @@
+:root {
+  --font-scale: 1.111111;
+  --bg: #f6f7f2;
+  --surface: #fff;
+  --ink: #25362f;
+  --muted: #53634f;
+  --green: #235846;
+  --green-dark: #163e30;
+  --green-pale: #e9f1e9;
+  --line: #dde5da;
+  --amber: #9a5c1b;
+  --amber-pale: #fff2dd;
+  --radius: 10px;
+}
+:root[data-font-size="standard"] {
+  --font-scale: 1;
+}
+:root[data-font-size="extra-large"] {
+  --font-scale: 1.333333;
+}
+body {
+  font-family: "DengXian", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.5;
+}
+h1,
+h2,
+h3,
+.brand,
+.mobile-brand,
+.font-setting > strong {
+  font-family:
+    "Microsoft YaHei UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.pick-quantity > strong,
+.stat strong,
+.subtotal-panel strong,
+.restaurant-amount strong,
+.order-card-bottom strong,
+.amount,
+input[inputmode="decimal"],
+input[inputmode="numeric"] {
+  font-family:
+    "Bahnschrift", "DIN Alternate", "Segoe UI", "DengXian", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.amount-row > strong {
+  font-family:
+    "Bahnschrift", "DIN Alternate", "Segoe UI", "DengXian", sans-serif;
+  white-space: nowrap;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #555;
+}
+button,
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+button {
+  overflow-wrap: anywhere;
+}
+svg {
+  flex-shrink: 0;
+}
+.draft-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  padding: 6px 0;
+  min-height: 60px;
+}
+.draft-open:disabled {
+  opacity: 1;
+}
+.draft-info {
+  flex: 1;
+  min-width: 0;
+}
+.draft-continue {
+  flex-shrink: 0;
+  color: var(--green);
+  font-size: calc(16px * var(--font-scale));
+  font-weight: 700;
+}
+.draft-delete {
+  color: var(--red);
+}
+.draft-import-row > .text-button {
+  flex-shrink: 0;
+  padding: 10px 6px;
+  font-size: calc(16px * var(--font-scale));
+}
+@media (max-width: 420px) {
+  .draft-import-row {
+    flex-wrap: nowrap;
+    gap: 4px 10px;
+  }
+  .draft-open {
+    flex-basis: 0;
+  }
+  .draft-continue {
+    display: none;
+  }
+}
+.font-setting {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 18px;
+}
+.font-setting > div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.font-setting button {
+  min-width: 68px;
+  padding: 10px 13px;
+}
+.auth-card .font-setting {
+  justify-content: center;
+}
+.panel,
+.order-card,
+.weigh-card,
+.draft-imports,
+.ai-extraction,
+.review-line,
+.original-text,
+.entry-card,
+.subtotal-panel {
+  background: #fff;
+  box-shadow: none;
+}
+.panel,
+.order-card,
+.weigh-card,
+.draft-imports {
+  padding: 16px;
+  border-radius: 10px;
+}
+.page-heading {
+  margin-bottom: 16px;
+}
+.page-heading h1 + p {
+  display: none;
+}
+.page-marker,
+.side-label {
+  display: none;
+}
+.workspace {
+  padding-top: 22px;
+}
+.zone-section {
+  margin-bottom: 20px;
+}
+.picking-summary {
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.picking-toolbar {
+  margin: 16px 0;
+  gap: 12px;
+}
+.orders-grid,
+.weigh-list {
+  gap: 14px;
+}
+.segmented {
+  background: #e9eee3;
+}
+.segmented .selected {
+  box-shadow: none;
+}
+.ai-extraction {
+  padding: 12px;
+  margin: 12px 0 18px;
+}
+.privacy-notice p {
+  color: #333;
+  line-height: 1.5;
+}
+.review-line {
+  border-radius: 0;
+  box-shadow: none;
+}
+.modal-body {
+  padding: 16px;
+}
+.modal-actions {
+  flex-wrap: wrap;
+}
+.modal-actions > * {
+  min-width: 0;
+}
+.card-heading,
+.section-heading {
+  flex-wrap: wrap;
+}
+.weigh-details,
+.order-card,
+.review-line {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.urgent-badge {
+  background: var(--amber-pale);
+  color: var(--amber);
+  border-color: var(--amber);
+}
+@media (max-width: 760px) {
+  .topbar {
+    padding: 10px 12px;
+  }
+  .workspace {
+    padding: 16px 12px;
+  }
+  .page-heading {
+    margin-bottom: 14px;
+  }
+  .page-heading h1 {
+    font-size: calc(26px * var(--font-scale));
+  }
+  .panel,
+  .order-card,
+  .weigh-card,
+  .draft-imports {
+    padding: 12px;
+  }
+  .workspace-footer {
+    padding-bottom: calc(116px + env(safe-area-inset-bottom));
+  }
+  .mobile-nav {
+    padding-top: 6px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+  }
+  .mobile-nav button {
+    min-height: 72px;
+    padding: 4px 1px;
+    gap: 3px;
+    font-size: calc(15px * var(--font-scale));
+    line-height: 1.35;
+  }
+  .date-control {
+    grid-template-columns: 48px minmax(0, 1fr) 48px 54px;
+  }
+  .date-control .today-button {
+    grid-column: auto;
+    width: 54px;
+    min-height: 48px;
+  }
+  .date-control input[type="date"] {
+    font-size: calc(17px * var(--font-scale));
+    padding: 8px 2px;
+  }
+  .date-control .today-button {
+    font-size: calc(15px * var(--font-scale));
+    padding: 8px 2px;
+  }
+  .modal {
+    max-width: calc(100vw - 12px);
+    max-height: calc(100dvh - 12px);
+  }
+  .modal-body {
+    padding: 12px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .modal-header {
+    padding: 12px;
+    gap: 8px;
+  }
+  .settings-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .settings-tabs button {
+    min-width: 0;
+    padding: 10px 6px;
+    flex-wrap: wrap;
+  }
+  .picking-toolbar .segmented {
+    width: 100%;
+  }
+  .picking-toolbar .segmented button {
+    flex: 1;
+    padding: 10px 6px;
+  }
+  .filter-group {
+    gap: 6px;
+  }
+  .context-strip {
+    flex-wrap: wrap;
+  }
+  .weigh-actions {
+    flex-wrap: wrap;
+  }
+  .actual-entry,
+  .quantity-row {
+    grid-template-columns: minmax(0, 1fr) 140px;
+  }
+  .amount-row,
+  .subtotal-panel > div {
+    flex-wrap: wrap;
+  }
+  .amount-row > strong {
+    margin-left: auto;
+  }
+  :root[data-font-size="extra-large"] .actual-entry,
+  :root[data-font-size="extra-large"] .quantity-row,
+  :root[data-font-size="extra-large"] .unit-rule-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :root[data-font-size="extra-large"] .actual-entry .field {
+    margin-bottom: 0;
+  }
+  :root[data-font-size="extra-large"] .amount-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .price-footer {
+    flex-wrap: wrap;
+  }
+  .price-footer > span {
+    max-width: none;
+  }
+  :root[data-font-size="extra-large"] .order-entry-actions > button {
+    flex-basis: 100%;
+  }
+}

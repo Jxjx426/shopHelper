@@ -61,19 +61,17 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
             <strong>
               {view === "zone" ? order.restaurant_name : item.product_name}
             </strong>
-            <span className="pick-subtext">
-              {item.unavailable
-                ? "缺货 · 不供货"
-                : item.picking_state === "picked"
-                  ? "已放入餐馆篮子"
-                  : "待配货"}
-              {order.urgent && (
-                <span className="urgent-inline">
-                  <Flame size={15} />
-                  加急
-                </span>
-              )}
-            </span>
+            {(item.unavailable || order.urgent) && (
+              <span className="pick-subtext">
+                {item.unavailable && "缺货"}
+                {order.urgent && (
+                  <span className="urgent-inline">
+                    <Flame size={15} />
+                    加急
+                  </span>
+                )}
+              </span>
+            )}
           </span>
         </label>
         <div className="pick-quantity">
@@ -110,9 +108,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">按区域拿货，按餐馆分篮</p>
           <h1>配货清单</h1>
-          <p>勾选表示这家餐馆的商品已放入篮子</p>
         </div>
         <div className="page-marker">
           <Layers size={22} />

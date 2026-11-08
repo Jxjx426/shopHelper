@@ -1,0 +1,101 @@
+.actual-lock {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.actual-lock:disabled .weigh-card {
+  background: #f7f8f4;
+}
+.document-panel {
+  margin-top: 20px;
+}
+.document-panel h2 {
+  margin-bottom: 12px;
+}
+.bill-totals {
+  margin: 12px 0;
+}
+.bill-totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  flex-wrap: wrap;
+}
+.bill-totals dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.bill-totals > div:last-child {
+  font-size: calc(23px * var(--font-scale));
+  color: var(--green);
+  border-top: 1px solid var(--line);
+}
+.action-wrap {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.document-links {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.document-links > strong {
+  display: block;
+}
+.document-panel details > summary {
+  min-height: 48px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+.history-list {
+  margin: 16px 0;
+}
+.history-row {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 4px;
+  background: #fff;
+  color: var(--ink);
+}
+.history-row strong,
+.history-row span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.history-row span {
+  color: var(--muted);
+  font-size: calc(16px * var(--font-scale));
+}
+.history-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.danger-text {
+  color: var(--red);
+}
+.restore-box {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .action-wrap > .primary,
+  .action-wrap > .secondary {
+    flex: 1 1 140px;
+  }
+  .bill-totals dd {
+    margin-left: auto;
+  }
+}

@@ -119,7 +119,7 @@ export function Modal({
     </dialog>
   );
 }
-export function ErrorText({ message }: { message: string }) {
+export function ErrorText({ message }: { message?: string }) {
   return message ? (
     <div className="inline-error" role="alert">
       {message}

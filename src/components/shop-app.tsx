@@ -22,6 +22,7 @@ import Orders from "./orders";
 import Picking from "./picking";
 import Weighing from "./weighing";
 import ShopSettings from "./settings";
+import { FontSetting, useFontSize } from "./font-setting";
 type Auth = { configured: boolean; user: { id: string; name: string } | null };
 type Tab = "orders" | "picking" | "weighing" | "settings";
 const tabs = [
@@ -40,6 +41,7 @@ async function request(url: string, init?: RequestInit) {
   return body;
 }
 export default function ShopApp() {
+  const fontPreference = useFontSize();
   const [auth, setAuth] = useState<Auth | null>(null);
   const [authError, setAuthError] = useState("");
   const [password, setPassword] = useState("");
@@ -201,12 +203,10 @@ export default function ShopApp() {
           <div className="brand-symbol">
             <Leaf size={34} />
           </div>
-          <p className="eyebrow">每日鲜货 · 有条不紊</p>
           <h1>鲜配助手</h1>
+          <FontSetting {...fontPreference} />
           <p className="auth-description">
-            {auth?.configured
-              ? "欢迎回来，输入店主密码开始今天的工作。"
-              : "先设置店名和店主密码，开始手动录单与配货。"}
+            {auth?.configured ? "输入店主密码。" : "设置店名和店主密码。"}
           </p>
           {!auth ? (
             <>
@@ -260,7 +260,7 @@ export default function ShopApp() {
             </form>
           )}
           <div className="edition-note">
-            第 2 阶段 · 本地订单审核版
+            第 3 阶段 · 本地配货与出单版
             <br />
             订单保存在本机；AI 导入需先阅读数据说明并确认
           </div>
@@ -303,11 +303,6 @@ export default function ShopApp() {
             <span />
             本地订单审核版
           </div>
-          <p>
-            先把每一份鲜货配好。
-            <br />
-            共享协作将在后续加入。
-          </p>
           <button className="text-button" onClick={() => void logout()}>
             <LogOut size={18} />
             退出店主账号
@@ -413,6 +408,7 @@ export default function ShopApp() {
             </div>
           ) : tab === "orders" ? (
             <Orders
+              onDateChange={setDate}
               onReload={() => load(date)}
               data={viewData}
               mutate={mutate}
@@ -436,6 +432,7 @@ export default function ShopApp() {
             />
           ) : (
             <ShopSettings
+              {...fontPreference}
               onLogout={logout}
               data={viewData}
               mutate={mutate}
@@ -445,7 +442,7 @@ export default function ShopApp() {
           )}
         </main>
         <footer className="workspace-footer">
-          <Leaf size={16} /> 鲜配助手 · 第 2 阶段
+          <Leaf size={16} /> 鲜配助手 · 第 3 阶段
           <span>手动录单 · 配货 · 称重</span>
         </footer>
       </div>

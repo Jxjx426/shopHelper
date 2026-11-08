@@ -28,6 +28,9 @@ import {
 } from "@/lib/domain";
 import { Empty, ErrorText, Field, Modal } from "./ui";
 import type { ViewProps } from "./types";
+import { FontSetting, type FontSize } from "./font-setting";
+import { RestaurantPrices, ThresholdSettings } from "./billing-settings";
+import BackupRestore from "./backup-restore";
 const splitAliases = (value: string) => [
   ...new Set(
     value
@@ -407,11 +410,15 @@ export function ProductEditor({
 }
 
 export default function ShopSettings(
-  props: ViewProps & { onLogout: () => Promise<void> },
+  props: ViewProps & {
+    onLogout: () => Promise<void>;
+    fontSize: FontSize;
+    onFontSize: (value: FontSize) => void;
+  },
 ) {
   const { data, mutate, busy } = props;
   const [section, setSection] = useState<
-    "products" | "zones" | "restaurants" | "shop"
+    "products" | "zones" | "restaurants" | "shop" | "prices"
   >("products");
   const [editor, setEditor] = useState<Editor | null>(null);
   const [filter, setFilter] = useState("");
@@ -433,6 +440,7 @@ export default function ShopSettings(
       count: data.restaurants.length,
     },
     { id: "shop", label: "店铺", icon: Settings, count: undefined },
+    { id: "prices", label: "餐馆专价", icon: Store, count: undefined },
   ] as const;
   async function downloadBackup() {
     setExporting(true);
@@ -468,7 +476,6 @@ export default function ShopSettings(
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">一次整理，每天省心</p>
           <h1>店铺设置</h1>
           <p>维护常用商品、区域、餐馆与标准价格</p>
         </div>
@@ -477,6 +484,7 @@ export default function ShopSettings(
           店主
         </div>
       </div>
+      <FontSetting fontSize={props.fontSize} onFontSize={props.onFontSize} />
       <div className="settings-tabs" role="tablist" aria-label="设置分类">
         {settingsTabs.map(({ id, label, icon: Icon, count }) => (
           <button
@@ -495,7 +503,9 @@ export default function ShopSettings(
           </button>
         ))}
       </div>
-      {section === "products" ? (
+      {section === "prices" ? (
+        <RestaurantPrices {...props} />
+      ) : section === "products" ? (
         <>
           <div className="list-toolbar">
             <input
@@ -830,19 +840,9 @@ export default function ShopSettings(
               {exporting ? "正在导出…" : "导出全部数据"}
             </button>
             <ErrorText message={backupError} />
-            <div className="inline-note">
-              本阶段提供数据导出。经过验证的一键恢复与自动备份将在第 3
-              阶段加入。完整本机备份方法见 README。
-            </div>
+            <BackupRestore />
           </section>
-          <section className="panel">
-            <h2>第 2 阶段范围</h2>
-            <p>已提供手动订单、两种配货视图、称重和基本计费。</p>
-            <p>
-              文字与截图可用 Gemini 提取，再由人工审核。PDF
-              定稿、历史复制删除、四人同步和任务分配尚未启用。
-            </p>
-          </section>
+          <ThresholdSettings {...props} />
         </div>
       )}
       {editor && editor.kind === "product" ? (

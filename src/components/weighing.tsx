@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import {
   ArrowLeft,
@@ -22,6 +22,8 @@ import {
 } from "@/lib/domain";
 import { Empty, ErrorText, Field, Modal, Progress } from "./ui";
 import type { Mutate, ViewProps } from "./types";
+import { discrepancy } from "@/lib/billing";
+import Documents from "./documents";
 
 function ActualItem({
   item,
@@ -31,6 +33,8 @@ function ActualItem({
   busy,
   onNext,
   error,
+  readOnly = false,
+  onDirtyChange,
 }: {
   item: OrderItem;
   product: string;
@@ -39,6 +43,8 @@ function ActualItem({
   busy: boolean;
   onNext: () => void;
   error?: string;
+  readOnly?: boolean;
+  onDirtyChange: (id: string, dirty: boolean) => void;
 }) {
   const [actual, setActual] = useState(
     item.actual_quantity
@@ -56,9 +62,15 @@ function ActualItem({
   const [failedSave, setFailedSave] = useState(false);
   const [refreshPrice, setRefreshPrice] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [warningNext, setWarningNext] = useState<boolean | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const localKey = `fresh-helper-actual:${item.id}`;
   useEffect(() => {
+    onDirtyChange(item.id, dirty);
+    return () => onDirtyChange(item.id, false);
+  }, [item.id, dirty, onDirtyChange]);
+  useEffect(() => {
+    if (readOnly) return;
     try {
       const raw = localStorage.getItem(localKey);
       if (raw) {
@@ -76,7 +88,7 @@ function ActualItem({
     } catch {
       /* Keep the saved server value if local draft is invalid. */
     }
-  }, [localKey, item.version]);
+  }, [localKey, item.version, readOnly]);
   useEffect(() => {
     if (dirty) {
       try {
@@ -105,18 +117,49 @@ function ActualItem({
   } catch {
     /* The server validates on save. */
   }
+  const restaurantId = data.orders.find(
+    (o) => o.id === item.order_id,
+  )?.restaurant_id;
   const currentPrice =
+    data.restaurantPrices.find(
+      (p) =>
+        p.restaurant_id === restaurantId &&
+        p.product_id === item.product_id &&
+        p.billing_unit === item.billing_unit,
+    )?.amount ??
     data.products
       .find((p) => p.id === item.product_id)
-      ?.units.find((u) => u.billingUnit === item.billing_unit)?.price ?? null;
+      ?.units.find((u) => u.billingUnit === item.billing_unit)?.price ??
+    null;
   const priceChanged =
     currentPrice !== null && item.price_snapshot !== currentPrice;
-  async function save(next: boolean) {
+  let warning: ReturnType<typeof discrepancy> = null;
+  try {
+    if (!readOnly && actual.trim())
+      warning = discrepancy(
+        item.ordered_quantity,
+        item.ordered_unit,
+        actual,
+        unit,
+        data.shop,
+      );
+  } catch {
+    /* Server validates invalid input. */
+  }
+  async function save(next: boolean, confirmed = false) {
     setLocalError("");
     setFailedSave(false);
     if (!actual.trim()) {
       setLocalError("请填写实供数量，空白不代表零或缺货");
       input.current?.focus();
+      return;
+    }
+    if (
+      warning?.warning &&
+      !confirmed &&
+      (dirty || item.discrepancy_ack !== warning.key)
+    ) {
+      setWarningNext(next);
       return;
     }
     if (
@@ -127,12 +170,15 @@ function ActualItem({
           version: item.version,
           quantity: actual,
           unit,
+          acknowledgeDiscrepancy: !!warning?.warning,
+          ...(warning?.warning ? { expectedDiscrepancyKey: warning.key } : {}),
         },
         "实供数量已保存，配货勾选保持不变",
       )
     ) {
       localStorage.removeItem(localKey);
       setDirty(false);
+      setWarningNext(null);
       if (next) onNext();
     } else setFailedSave(true);
   }
@@ -168,6 +214,21 @@ function ActualItem({
           </strong>
         </span>
       </div>
+      {warning?.warning && !item.unavailable && (
+        <p className="inline-note">
+          重量{warning.direction} {warning.percent}%（阈值 {warning.threshold}
+          %）{!dirty && item.discrepancy_ack === warning.key ? " · 已确认" : ""}
+        </p>
+      )}
+      {!isWeight(item.ordered_unit) &&
+        unit === item.ordered_unit &&
+        actual.trim() &&
+        Number(actual) !== Number(item.ordered_quantity) && (
+          <p className="inline-note">
+            实供数量有变：订购 {Number(item.ordered_quantity)}{" "}
+            {item.ordered_unit}，实供 {actual} {unit}
+          </p>
+        )}
       {item.unavailable ? (
         <div className="unavailable-body">
           <PackageX size={27} />
@@ -362,6 +423,45 @@ function ActualItem({
           </div>
         </Modal>
       )}
+      {warningNext !== null && warning?.warning && (
+        <Modal
+          title="核对重量差异"
+          onClose={() => {
+            if (!busy) setWarningNext(null);
+          }}
+        >
+          <h3>{product}</h3>
+          <p>
+            订购 {Number(item.ordered_quantity)} {item.ordered_unit}
+          </p>
+          <p>
+            实供 {actual} {unit}
+          </p>
+          <p className="inline-note">
+            {warning.direction} {warning.percent}%，超过 {warning.threshold}%
+          </p>
+          <ErrorText message={error} />
+          <div className="modal-actions">
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => {
+                setWarningNext(null);
+                input.current?.focus();
+              }}
+            >
+              修改重量
+            </button>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => void save(warningNext, true)}
+            >
+              确认此重量
+            </button>
+          </div>
+        </Modal>
+      )}
       {refreshPrice && (
         <Modal
           title="更新这项订单价格？"
@@ -420,6 +520,18 @@ function ActualItem({
 }
 
 export default function Weighing({ data, mutate, busy, error }: ViewProps) {
+  const [dirtyItems, setDirtyItems] = useState<string[]>([]);
+  const changeDirty = useCallback((id: string, dirty: boolean) => {
+    setDirtyItems((ids) =>
+      dirty
+        ? ids.includes(id)
+          ? ids
+          : [...ids, id]
+        : ids.includes(id)
+          ? ids.filter((value) => value !== id)
+          : ids,
+    );
+  }, []);
   const [selected, setSelected] = useState<string | null>(null);
   const order = data.orders.find((o) => o.id === selected);
   useEffect(() => {
@@ -445,7 +557,6 @@ export default function Weighing({ data, mutate, busy, error }: ViewProps) {
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">核对实供，再算清每一笔</p>
           <h1>称重与计费</h1>
           <p>按餐馆填写实际重量，或确认供货数量</p>
         </div>
@@ -537,40 +648,35 @@ export default function Weighing({ data, mutate, busy, error }: ViewProps) {
           </div>
           <div className="weigh-list">
             {order.items.map((item, index) => (
-              <ActualItem
-                key={`${item.id}:${item.version}`}
-                item={item}
-                product={item.product_name}
-                data={data}
-                mutate={mutate}
-                busy={busy}
-                onNext={() => nextItem(index)}
-                error={error}
-              />
+              <fieldset
+                className="actual-lock"
+                disabled={!!order.finalized_document_id}
+                key={`${item.id}:${item.version}:${order.finalized_document_id}`}
+              >
+                <ActualItem
+                  item={item}
+                  product={item.product_name}
+                  data={data}
+                  mutate={mutate}
+                  busy={busy}
+                  onNext={() => nextItem(index)}
+                  error={error}
+                  readOnly={!!order.finalized_document_id}
+                  onDirtyChange={changeDirty}
+                />
+              </fieldset>
             ))}
           </div>
-          <div className="subtotal-panel">
-            <div>
-              <span>
-                {order.items.every(billedResolved)
-                  ? "商品小计"
-                  : "已确认商品金额"}
-              </span>
-              <strong>{money(subtotal(order.items))}</strong>
-            </div>
-            <p>
-              {order.items.every(billedResolved)
-                ? "实供与价格已齐全。"
-                : "仍有实供或价格未确认，此金额不是完整订单总额。"}
-              尚未应用最终 RM 0.10 舍入，也未生成送货单。
-            </p>
-          </div>
+          <Documents
+            order={order}
+            data={data}
+            mutate={mutate}
+            busy={busy}
+            error={error}
+            unsaved={order.items.some((i) => dirtyItems.includes(i.id))}
+          />
         </>
       )}
-      <div className="stage-note">
-        这是第 1 阶段的称重计费。差异警告、最终舍入和 PDF 定稿将在第 3
-        阶段加入。
-      </div>
     </>
   );
 }
