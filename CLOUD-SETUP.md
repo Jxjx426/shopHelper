@@ -1,6 +1,6 @@
 # Netlify + Supabase 免费云端适配
 
-本轮完成代码适配和隔离测试，**尚未注册账号、连接真实云项目、迁移营业资料或部署**。默认仍是 `SHOP_BACKEND=local`，现有 `.env.local` 和营业数据库继续使用。Stage 5 不在范围内，字体、颜色、金额和历史单据规则保持原样。
+2026-11-08 完成代码适配和隔离测试。2026-11-09 店主已建立 Supabase 项目，使用从项目控制台下载的公开 CA 证书，真实云数据库的 TLS/主机名校验及只读连接测试已通过。2026-11-09 已初始化空的私有云端资料表、版本订阅策略和私有 Storage bucket，真实连接检查通过。**尚未迁移营业资料，本轮未触发 Netlify 更新部署或公开发布**。默认仍是 `SHOP_BACKEND=local`，现有 `.env.local` 和营业数据库继续使用。Stage 5 不在范围内，字体、颜色、金额和历史单据规则保持原样。
 
 ## 先让店主测试
 
@@ -132,7 +132,7 @@ Netlify Free 的函数区域不能免费自选；参考 [函数区域限制](htt
 
 云端模式保存订单、账号哈希、原截图和 PDF 到店主的 Supabase 项目，Netlify 处理受保护的业务请求。只有明确要求 AI 提取且确认数据说明后，原文或处理图才发送给 Gemini。Gemini 免费层允许 Google 按 unpaid-service 条款使用输入/输出改进产品、可能人工审核；不得上传敏感、个人或保密订单，可改用人工/规则审核。原图不发给 Gemini，但**会**存入私有 Supabase，不能再称为“只在本机”。
 
-目前已验证本机生产构建、原流程、真实 PostgreSQL 四独立连接、RLS、迁移指纹及文件、后台任务幂等、恢复、SSE和闲置同步。Storage 使用测试替身，未实际连接托管 Supabase，也未执行 Netlify Linux 平台发布。真实 TLS/项目角色、签名上传 CORS、Realtime网络、后台函数路由和字体部署，以及四部手机各自 mobile data，仍须在注册账号后的独立测试项目验收；不得把本轮本机通过当作已经上线成功。
+目前已验证本机生产构建、原流程、真实 PostgreSQL 四独立连接、RLS、迁移指纹及文件、后台任务幂等、恢复、SSE和闲置同步。Storage 使用测试替身，未执行 Netlify Linux 平台发布。2026-11-09 真实 Supabase PostgreSQL 证书校验和只读连接已通过；项目角色、签名上传 CORS、Realtime网络、后台函数路由和字体部署，以及四部手机各自 mobile data，仍须在独立测试项目验收；不得把本轮本机通过当作已经上线成功。
 
 ## 本轮检查结果
 
@@ -150,4 +150,6 @@ Netlify Free 的函数区域不能免费自选；参考 [函数区域限制](htt
 | 手机布局 | 390×844、大字设置下检查登录、配货和备份入口，原字体/配色保留 |
 | 测试清理 | 3001 与临时 PostgreSQL 已关闭；原 3000 店铺服务保留 |
 
-真实云项目未注册，因此没有宣称签名上传、托管 Realtime 或 Netlify 后台执行已通过线上验收。
+2026-11-09 已完成真实 Supabase 数据库的证书校验和只读连接；未修改云数据库，未宣称签名上传、托管 Realtime 或 Netlify 后台执行已通过线上验收。公开证书位于 assets/supabase-ca.crt；本机服务器设置 SHOP_DB_CA_FILE 指向该文件，后续 Netlify 也需同样设置。
+
+2026-11-09 上线准备更新：店主确认 Netlify 和 Supabase 均为 Free；已提供 Netlify 私有测试网址并手动导入生产变量。专用导入文件 .env.netlify.local 已受 Git 忽略，不可提交。云端私有表、bucket、TLS、权限隔离与 Realtime JWT 检查通过；原店完整 JSON 和冷数据库副本已保存在 data/backups/pre-cloud-2026-11-09-*，原库保留。公开 CA 证书和部署说明已在本机准备，构建通过。营业迁移、GitHub 推送及 Netlify 更新部署仍等待店主确认；不点击 Make public。
