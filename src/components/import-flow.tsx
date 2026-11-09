@@ -1,4 +1,5 @@
 "use client";
+import { uploadPrivateFile } from "@/lib/file-transfer.client";
 import { allowed } from "@/lib/permissions";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -543,6 +544,27 @@ export default function ImportFlow({
     if (kind === "text" && !text.trim()) throw new Error("请粘贴订单文字");
     if (kind === "image" && !screenshot)
       throw new Error("请选择截图，完成裁剪或遮盖后再保存");
+    let uploaded: { originalAssetId: string; preparedAssetId: string } | null =
+      null;
+    if (kind === "image" && screenshot) {
+      const blob = (image: { mime: string; base64: string }) =>
+        new Blob(
+          [Uint8Array.from(atob(image.base64), (c) => c.charCodeAt(0))],
+          { type: image.mime },
+        );
+      const originalAssetId = await uploadPrivateFile(
+        blob(screenshot.original),
+        "image",
+      );
+      if (originalAssetId) {
+        const preparedAssetId = await uploadPrivateFile(
+          blob(screenshot.prepared),
+          "image",
+        );
+        if (!preparedAssetId) throw new Error("上传配置已变化，请重试");
+        uploaded = { originalAssetId, preparedAssetId };
+      }
+    }
     const result = await write<{ id: string; reused: boolean }>(
       "/api/imports",
       {
@@ -551,7 +573,10 @@ export default function ImportFlow({
         kind,
         ...(kind === "text"
           ? { text }
-          : { original: screenshot!.original, prepared: screenshot!.prepared }),
+          : (uploaded ?? {
+              original: screenshot!.original,
+              prepared: screenshot!.prepared,
+            })),
       },
     );
     setId(result.id);
@@ -693,7 +718,7 @@ export default function ImportFlow({
             <ScreenshotEditor onChange={setScreenshot} disabled={pending} />
           )}
           <p className="fine-print">
-            先保存原稿到本机，再决定是否发送给 Gemini。不配置密钥也能手动审核。
+            先保存原稿到店铺，再决定是否发送给 Gemini。不配置密钥也能手动审核。
           </p>
           <div className="modal-actions">
             <button className="secondary" onClick={onClose} disabled={pending}>

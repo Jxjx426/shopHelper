@@ -25,6 +25,10 @@ import ShopSettings from "./settings";
 import { FontSetting, useFontSize } from "./font-setting";
 import type { CurrentUser } from "@/lib/permissions";
 import { retryKey, forgetRetry } from "@/lib/retry-ledger";
+import {
+  startWorkspaceSync,
+  type SyncHealth,
+} from "@/lib/workspace-sync.client";
 type Auth = { configured: boolean; user: CurrentUser | null };
 type Tab = "orders" | "picking" | "weighing" | "settings";
 const tabs = [
@@ -58,6 +62,8 @@ export default function ShopApp() {
   dateRef.current = date;
   const [tab, setTab] = useState<Tab>("orders");
   const [data, setData] = useState<Workspace | null>(null);
+  const workspaceRef = useRef<Workspace | null>(null);
+  workspaceRef.current = data;
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
@@ -67,13 +73,33 @@ export default function ShopApp() {
   const [connected, setConnected] = useState(true);
   const [pending, setPending] = useState(false);
   const loadSequence = useRef(0);
+  const etags = useRef(new Map<string, string>());
+  const [syncHealth, setSyncHealth] = useState<SyncHealth>("connecting");
   const failedRequests = useRef(new Map<string, string>());
   const mutationLock = useRef(false);
   const load = useCallback(async (selected: string, silent = false) => {
     const sequence = ++loadSequence.current;
     if (!silent) setLoading(true);
     try {
-      const value = await request(`/api/workspace?date=${selected}`);
+      const response = await fetch(`/api/workspace?date=${selected}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(12000),
+        headers:
+          workspaceRef.current?.date === selected && etags.current.has(selected)
+            ? { "If-None-Match": etags.current.get(selected)! }
+            : {},
+      });
+      if (response.status === 304) {
+        if (sequence === loadSequence.current) setConnected(true);
+        return;
+      }
+      const value = await response.json();
+      if (!response.ok)
+        throw Object.assign(new Error(value.error), {
+          status: response.status,
+        });
+      if (response.headers.get("ETag"))
+        etags.current.set(selected, response.headers.get("ETag")!);
       if (sequence === loadSequence.current && dateRef.current === selected) {
         setConnected(true);
         setData((previous) =>
@@ -95,7 +121,7 @@ export default function ShopApp() {
       setAuth(await request("/api/auth"));
       setAuthError("");
     } catch {
-      setAuthError("无法连接本地服务，请确认已运行 npm run dev，再点重试。");
+      setAuthError("无法连接店铺，请检查网络或服务后重试。");
     }
   }, []);
   useEffect(() => {
@@ -118,26 +144,31 @@ export default function ShopApp() {
   }, [auth?.user, date, load]);
   useEffect(() => {
     if (!auth?.user) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      if (
-        !mutationLock.current &&
-        navigator.onLine &&
-        document.visibilityState === "visible"
-      ) {
-        try {
-          await load(dateRef.current, true);
-        } catch {
-          /* The connection badge reports failure; inputs stay mounted. */
-        }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const flush = () => {
+      if (mutationLock.current) {
+        timer = setTimeout(flush, 300);
+        return;
       }
-      if (!stopped) timer = setTimeout(poll, 2000);
+      void load(dateRef.current, true).catch(() => {});
     };
-    timer = setTimeout(poll, 2000);
+    const refresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(flush, 300);
+    };
+    const stop = startWorkspaceSync(
+      refresh,
+      (health) => {
+        setSyncHealth(health);
+        if (health === "offline") setConnected(false);
+        else if (health === "live" || health === "slow") setConnected(true);
+      },
+      () =>
+        setAuth((previous) => (previous ? { ...previous, user: null } : null)),
+    );
     return () => {
-      stopped = true;
-      clearTimeout(timer);
+      stop();
+      if (timer) clearTimeout(timer);
     };
   }, [auth?.user?.id, load]);
   useEffect(() => {
@@ -151,6 +182,10 @@ export default function ShopApp() {
         body: JSON.stringify({ action: "logout" }),
       });
       setData(null);
+      loadSequence.current++;
+      etags.current.clear();
+      failedRequests.current.clear();
+      setPending(false);
       await checkAuth();
     } catch (e) {
       setNotice({ text: (e as Error).message, error: true });
@@ -262,6 +297,10 @@ export default function ShopApp() {
       });
       setPassword("");
       setData(null);
+      loadSequence.current++;
+      etags.current.clear();
+      failedRequests.current.clear();
+      setPending(false);
       await checkAuth();
     } catch (e) {
       setAuthError((e as Error).message);
@@ -297,7 +336,7 @@ export default function ShopApp() {
                 disabled={!authError}
                 onClick={() => void checkAuth()}
               >
-                {authError ? "重新连接" : "正在连接本地数据库…"}
+                {authError ? "重新连接" : "正在连接店铺…"}
               </button>
             </>
           ) : (
@@ -453,7 +492,13 @@ export default function ShopApp() {
                   ? "保存中…"
                   : pending
                     ? "未保存"
-                    : "已同步"}
+                    : syncHealth === "live"
+                      ? "已同步"
+                      : syncHealth === "slow"
+                        ? "同步较慢"
+                        : syncHealth === "connecting"
+                          ? "正在连接…"
+                          : "等待连接"}
             </span>
           </div>
         </header>

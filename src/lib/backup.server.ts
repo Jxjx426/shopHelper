@@ -1,3 +1,6 @@
+import { loadBlob, storeBlob } from "./file-store.server";
+import { saveCloudBackup } from "./cloud-backup.server";
+import { completeRestoreJob } from "./cloud-job-context.server";
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -286,7 +289,12 @@ function payload(input: unknown): Backup {
   }
   return data;
 }
-async function insertBackup(tx: Transaction, data: Backup, owner?: string) {
+export async function insertBackup(
+  tx: Transaction,
+  data: Backup,
+  owner?: string,
+  migration = false,
+) {
   for (const actor of data.actors) {
     check(
       Object.keys(actor).every((k) => ["id", "name", "role"].includes(k)) &&
@@ -304,7 +312,7 @@ async function insertBackup(tx: Transaction, data: Backup, owner?: string) {
   for (const table of tables) {
     const columns = (
       await tx.query<{ column_name: string; data_type: string }>(
-        "SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1",
+        "SELECT column_name,data_type FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1",
         [table],
       )
     ).rows;
@@ -315,6 +323,24 @@ async function insertBackup(tx: Transaction, data: Backup, owner?: string) {
         row.superseded_pdf = row.superseded_base64
           ? pdfBytes(row.superseded_base64)
           : null;
+        if (tx.backend === "postgres") {
+          const pdf = await storeBlob(
+            tx,
+            row.pdf as Uint8Array,
+            "application/pdf",
+          );
+          row.pdf = pdf.bytes;
+          row.pdf_asset_id = pdf.assetId;
+          if (row.superseded_pdf) {
+            const old = await storeBlob(
+              tx,
+              row.superseded_pdf as Uint8Array,
+              "application/pdf",
+            );
+            row.superseded_pdf = old.bytes;
+            row.superseded_asset_id = old.assetId;
+          }
+        }
         delete row.pdf_base64;
         delete row.superseded_base64;
       }
@@ -340,7 +366,13 @@ async function insertBackup(tx: Transaction, data: Backup, owner?: string) {
               (!meta.pages || meta.pages === 1),
             "截图内容",
           );
-          row[`${kind}_image`] = bytes;
+          const stored = await storeBlob(
+            tx,
+            bytes,
+            String(row[`${kind}_mime`]),
+          );
+          row[`${kind}_image`] = stored.bytes;
+          if (stored.assetId) row[`${kind}_asset_id`] = stored.assetId;
           delete row[`${kind}_base64`];
         }
       }
@@ -352,13 +384,17 @@ async function insertBackup(tx: Transaction, data: Backup, owner?: string) {
           "导入草稿",
         );
         if (owner) row.created_by = owner;
-        row.preview = null;
-        if (row.status === "extracting") {
+        if (!migration) row.preview = null;
+        if (!migration && row.status === "extracting") {
           row.status = "failed";
           row.error_message = "备份中的识别已中断，请手动审核或重试。";
         }
       }
-      if (table === "extraction_attempts" && row.status === "pending") {
+      if (
+        !migration &&
+        table === "extraction_attempts" &&
+        row.status === "pending"
+      ) {
         row.status = "failed";
         row.error_code = "restored";
         row.finished_at = new Date().toISOString();
@@ -462,10 +498,10 @@ export async function validateBackup(input: unknown) {
   }
 }
 async function stateHash(tx: Transaction) {
-  const { exportedAt, checksum, ...data } = await backupIn(tx);
-  void exportedAt;
-  void checksum;
-  return backupChecksum(data);
+  const row = (
+    await tx.query("SELECT generation,revision::text FROM app_state WHERE id=1")
+  ).rows[0];
+  return digest(JSON.stringify(row));
 }
 export async function previewRestore(actor: string, input: unknown) {
   const db = await getDb();
@@ -474,9 +510,25 @@ export async function previewRestore(actor: string, input: unknown) {
   const id = randomUUID();
   await db.transaction(async (tx) => {
     await tx.query("DELETE FROM restore_previews WHERE expires_at<now()");
+    const file =
+      tx.backend === "postgres"
+        ? await storeBlob(
+            tx,
+            Buffer.from(JSON.stringify(data)),
+            "application/json",
+            "temporary",
+            new Date(Date.now() + 3600000).toISOString(),
+          )
+        : null;
     await tx.query(
-      "INSERT INTO restore_previews(id,actor_id,payload,state_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '15 minutes')",
-      [id, actor, JSON.stringify(data), await stateHash(tx)],
+      "INSERT INTO restore_previews(id,actor_id,payload,state_hash,expires_at,payload_asset_id) VALUES($1,$2,$3,$4,now()+interval '30 minutes',$5)",
+      [
+        id,
+        actor,
+        file ? "{}" : JSON.stringify(data),
+        await stateHash(tx),
+        file?.assetId ?? null,
+      ],
     );
   });
   return {
@@ -501,30 +553,43 @@ export async function confirmRestore(actor: string, input: unknown) {
   return db.transaction(async (tx) => {
     await requireOwner(tx, actor);
     const preview = (
-      await tx.query<{ payload: Backup; state_hash: string }>(
-        "SELECT payload,state_hash FROM restore_previews WHERE id=$1 AND actor_id=$2 AND expires_at>now()",
+      await tx.query<{
+        payload: Backup;
+        state_hash: string;
+        payload_asset_id: string | null;
+      }>(
+        "SELECT payload,state_hash,payload_asset_id FROM restore_previews WHERE id=$1 AND actor_id=$2 AND expires_at>now()",
         [a.token, actor],
       )
     ).rows[0];
     check(preview, "验证已过期，请重新选择文件");
+    if (preview.payload_asset_id)
+      preview.payload = JSON.parse(
+        (await loadBlob(null, preview.payload_asset_id, tx)).toString("utf8"),
+      );
     check(
       a.shopName === preview.payload.tables.shop[0].name,
       "请输入备份中的店名确认",
     );
     if ((await stateHash(tx)) !== preview.state_hash)
       throw new AppError("现有资料已变化，请重新验证备份后再恢复", 409);
-    const before = await backupIn(tx);
-    const folder = path.join(
-      path.dirname(
-        process.env.SHOP_DATA_DIR ?? path.join(process.cwd(), "data/postgres"),
-      ),
-      "backups",
-    );
-    await mkdir(folder, { recursive: true });
     const safetyFile = `pre-restore-${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}.json`;
-    await writeFile(path.join(folder, safetyFile), JSON.stringify(before), {
-      flag: "wx",
-    });
+    if (tx.backend === "postgres")
+      await saveCloudBackup(tx, safetyFile, "safety");
+    else {
+      const before = await backupIn(tx);
+      const folder = path.join(
+        path.dirname(
+          process.env.SHOP_DATA_DIR ??
+            path.join(process.cwd(), "data/postgres"),
+        ),
+        "backups",
+      );
+      await mkdir(folder, { recursive: true });
+      await writeFile(path.join(folder, safetyFile), JSON.stringify(before), {
+        flag: "wx",
+      });
+    }
     await tx.query("DELETE FROM operation_requests");
     await tx.query("DELETE FROM extraction_cache");
     await tx.query("DELETE FROM extraction_cooldown");
@@ -540,6 +605,8 @@ export async function confirmRestore(actor: string, input: unknown) {
       "INSERT INTO change_records(id,actor_id,action,entity_id,details) VALUES($1,$2,'restoreBackup','1',$3)",
       [randomUUID(), actor, JSON.stringify({ safetyFile })],
     );
-    return { restored: true, safetyFile };
+    const result = { restored: true, safetyFile };
+    await completeRestoreJob(tx, result);
+    return result;
   });
 }

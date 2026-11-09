@@ -1,4 +1,8 @@
 "use client";
+import { uploadPrivateFile } from "@/lib/file-transfer.client";
+import { waitCloudJob } from "@/lib/cloud-jobs.client";
+import { startFileRequest } from "@/lib/cloud-request.client";
+import { downloadTicket } from "@/lib/file-transfer.client";
 import { useEffect, useState } from "react";
 import { ErrorText, Field, Modal } from "./ui";
 type Preview = {
@@ -14,6 +18,9 @@ export default function BackupRestore() {
     enabled: boolean;
     lastSuccess: string | null;
     error: string | null;
+    cloud?: boolean;
+    bytes?: number;
+    records?: { id: string; kind: string; created_at: string }[];
   } | null>(null);
   const [healthError, setHealthError] = useState("");
   useEffect(() => {
@@ -35,10 +42,8 @@ export default function BackupRestore() {
       }
     };
     void read();
-    const timer = setInterval(() => void read(), 30000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
     };
   }, []);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -48,14 +53,14 @@ export default function BackupRestore() {
   const [checked, setChecked] = useState(false);
   const [done, setDone] = useState("");
   async function request(body: unknown) {
-    const response = await fetch("/api/restore", {
+    const response = await startFileRequest("/api/restore", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const value = await response.json();
     if (!response.ok) throw new Error(value.error);
-    return value;
+    return response.status === 202 ? await waitCloudJob(value) : value;
   }
   async function select(file: File | undefined) {
     if (!file || busy) return;
@@ -67,8 +72,15 @@ export default function BackupRestore() {
     try {
       if (file.size > 128 * 1024 * 1024)
         throw new Error("备份最大 128MB，请使用完整数据目录备份方式。");
-      const backup = JSON.parse(await file.text());
-      setPreview(await request({ action: "preview", backup }));
+      const uploadId = await uploadPrivateFile(
+        new Blob([file], { type: "application/json" }),
+        "backup",
+      );
+      if (uploadId) setPreview(await request({ action: "preview", uploadId }));
+      else {
+        const backup = JSON.parse(await file.text());
+        setPreview(await request({ action: "preview", backup }));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "无法读取备份文件");
     } finally {
@@ -82,7 +94,9 @@ export default function BackupRestore() {
         <p>
           {health.enabled
             ? "已开启，每天一份"
-            : "未开启，请先配置服务器备份目录及开关"}
+            : health.cloud
+              ? "未开启，云端测试后再启用每日快照"
+              : "未开启，请先配置服务器备份目录及开关"}
         </p>
       )}
       {health?.lastSuccess && (
@@ -97,6 +111,48 @@ export default function BackupRestore() {
         <p>等待首次备份，请稍后确认文件已生成。</p>
       )}
       <ErrorText message={health?.error || healthError} />
+      {health?.cloud && (
+        <>
+          <p className="fine-print">
+            云内快照与原文件保存在同一服务，请另行下载完整备份。
+          </p>
+          <p>文件用量：{((health.bytes ?? 0) / 1024 / 1024).toFixed(1)} MB</p>
+          {!!health.records?.length && (
+            <details>
+              <summary>最近云内快照</summary>
+              {health.records.map((record) => (
+                <button
+                  key={record.id}
+                  className="secondary"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError("");
+                    try {
+                      const r = await startFileRequest(
+                        `/api/backup?backupId=${encodeURIComponent(record.id)}`,
+                        { cache: "no-store" },
+                      );
+                      const value = await r.json();
+                      if (!r.ok) throw new Error(value.error);
+                      await downloadTicket(await waitCloudJob(value));
+                    } catch (e) {
+                      setError((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  {new Date(record.created_at).toLocaleString("zh-CN", {
+                    timeZone: "Asia/Kuala_Lumpur",
+                  })}{" "}
+                  · {record.kind === "safety" ? "恢复前" : "每日"} · 下载
+                </button>
+              ))}
+            </details>
+          )}
+        </>
+      )}
       <h3>恢复备份</h3>
       <p className="fine-print">
         先验证文件，再确认替换。恢复前自动保存一份现有资料；登录密码保持不变。

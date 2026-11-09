@@ -1,0 +1,14 @@
+[build]
+command = "npm run build"
+publish = ".next"
+
+[build.environment]
+NODE_VERSION = "24"
+
+[functions]
+directory = "netlify/functions"
+node_bundler = "esbuild"
+external_node_modules = ["@electric-sql/pglite", "pdfkit", "sharp", "pg"]
+included_files = ["assets/pdf-fonts/**", "assets/*ca*.crt"]
+
+# No paid add-ons, account changes, automatic top-ups or deployment commands.

@@ -1,3 +1,4 @@
+import { loadBlob, storeBlob } from "./file-store.server";
 import { randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import { getDb, type Transaction } from "./db";
@@ -235,8 +236,9 @@ export async function applyDocument(
     const snapshot = { ...state.snapshot, draft: false, number, revision };
     const pdf = await renderDeliveryPdf(snapshot);
     const id = randomUUID();
+    const stored = await storeBlob(tx, pdf, "application/pdf");
     await tx.query(
-      "INSERT INTO documents(id,order_id,number,revision,sequence_no,snapshot,pdf,pdf_sha256,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      "INSERT INTO documents(id,order_id,number,revision,sequence_no,snapshot,pdf,pdf_sha256,created_by,pdf_asset_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
       [
         id,
         a.id,
@@ -244,9 +246,10 @@ export async function applyDocument(
         revision,
         seq,
         JSON.stringify(snapshot),
-        pdf,
+        stored.bytes,
         digest(pdf),
         actor,
+        stored.assetId,
       ],
     );
     for (const old of previous.filter((d) => d.revision === revision - 1)) {
@@ -254,9 +257,10 @@ export async function applyDocument(
         old.snapshot,
         `已被第 ${revision} 版替代 / SUPERSEDED`,
       );
+      const oldPdf = await storeBlob(tx, superseded, "application/pdf");
       await tx.query(
-        "UPDATE documents SET superseded_at=now(),superseded_pdf=$1 WHERE id=$2",
-        [superseded, old.id],
+        "UPDATE documents SET superseded_at=now(),superseded_pdf=$1,superseded_asset_id=$3 WHERE id=$2",
+        [oldPdf.bytes, old.id, oldPdf.assetId],
       );
     }
     await tx.query(
@@ -275,12 +279,23 @@ export async function documentPdf(id: string) {
   const row = (
     await db.query<{
       pdf: Uint8Array;
+      pdf_asset_id: string | null;
+      superseded_asset_id: string | null;
       superseded_pdf: Uint8Array | null;
       number: string;
-    }>("SELECT pdf,superseded_pdf,number FROM documents WHERE id=$1", [id])
+    }>(
+      "SELECT pdf,superseded_pdf,number,pdf_asset_id,superseded_asset_id FROM documents WHERE id=$1",
+      [id],
+    )
   ).rows[0];
   if (!row) throw new AppError("送货单不存在", 404);
-  return { bytes: row.superseded_pdf ?? row.pdf, number: row.number };
+  return {
+    bytes: await loadBlob(
+      row.superseded_pdf ?? row.pdf,
+      row.superseded_asset_id ?? row.pdf_asset_id,
+    ),
+    number: row.number,
+  };
 }
 export async function draftPdf(id: string) {
   const db = await getDb();

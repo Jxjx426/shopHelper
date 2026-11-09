@@ -1,3 +1,5 @@
+import { cloudMode } from "@/lib/cloud-config.server";
+import { cloudDocumentAsset, redirectAsset } from "@/lib/file-response.server";
 import { NextRequest, NextResponse } from "next/server";
 import { failure, requireUser } from "@/lib/http";
 import { documentPdf } from "@/lib/documents.server";
@@ -11,6 +13,17 @@ export async function GET(
   try {
     await requireUser(request);
     const id = (await context.params).id;
+    if (cloudMode()) {
+      const asset = await cloudDocumentAsset(
+        id,
+        request.nextUrl.searchParams.get("original") === "1",
+      );
+      return redirectAsset(
+        asset.id,
+        `${asset.number}.pdf`,
+        request.nextUrl.searchParams.has("download"),
+      );
+    }
     const result = await (request.nextUrl.searchParams.get("original") === "1"
       ? documentPdf(id)
       : presentedDocumentPdf(id));

@@ -1,3 +1,5 @@
+import { loadBlob, storeBlob } from "./file-store.server";
+import { stagedFile } from "./uploads.server";
 import { requirePermission } from "./permissions.server";
 import { randomUUID, createHash } from "node:crypto";
 import sharp from "sharp";
@@ -65,6 +67,8 @@ const createSchema = z
     kind: z.enum(["text", "image"]),
     text: z.string().max(MAX_TEXT_LENGTH).optional(),
     original: imageInput.optional(),
+    originalAssetId: z.string().uuid().optional(),
+    preparedAssetId: z.string().uuid().optional(),
     prepared: imageInput.optional(),
   })
   .strict();
@@ -220,6 +224,26 @@ export async function createImport(actor: string, key: string, input: unknown) {
   const parsed = createSchema.safeParse(input);
   ensure(parsed.success, "导入内容或日期无效");
   const a = parsed.data;
+  if (a.originalAssetId || a.preparedAssetId) {
+    ensure(
+      a.kind === "image" &&
+        a.originalAssetId &&
+        a.preparedAssetId &&
+        !a.original &&
+        !a.prepared,
+      "图片上传引用无效",
+    );
+    const original = await stagedFile(actor, a.originalAssetId!, "image"),
+      prepared = await stagedFile(actor, a.preparedAssetId!, "image");
+    a.original = {
+      mime: original.mime as "image/png",
+      base64: original.bytes.toString("base64"),
+    };
+    a.prepared = {
+      mime: prepared.mime as "image/jpeg",
+      base64: prepared.bytes.toString("base64"),
+    };
+  }
   if (a.kind === "text") {
     ensure(a.text?.trim(), "请先粘贴订单文字");
     ensure(
@@ -253,12 +277,20 @@ export async function createImport(actor: string, key: string, input: unknown) {
       for (const prior of previous) {
         if (a.kind === "text") return { id: prior.id, reused: true };
         const image = (
-          await tx.query<{ prepared_image: Uint8Array }>(
-            "SELECT prepared_image FROM import_images WHERE draft_id=$1",
+          await tx.query<{
+            prepared_image: Uint8Array | null;
+            prepared_asset_id: string | null;
+          }>(
+            "SELECT prepared_image,prepared_asset_id FROM import_images WHERE draft_id=$1",
             [prior.id],
           )
         ).rows[0];
-        if (image && sha(image.prepared_image) === sha(prepared!.bytes))
+        if (
+          image &&
+          sha(
+            await loadBlob(image.prepared_image, image.prepared_asset_id, tx),
+          ) === sha(prepared!.bytes)
+        )
           return { id: prior.id, reused: true };
       }
       const id = randomUUID();
@@ -277,11 +309,22 @@ export async function createImport(actor: string, key: string, input: unknown) {
           JSON.stringify(lines),
         ],
       );
-      if (original && prepared)
+      if (original && prepared) {
+        const orig = await storeBlob(tx, original.bytes, original.mime),
+          prep = await storeBlob(tx, prepared.bytes, prepared.mime);
         await tx.query(
-          "INSERT INTO import_images(draft_id,original_image,original_mime,prepared_image,prepared_mime) VALUES($1,$2,$3,$4,$5)",
-          [id, original.bytes, original.mime, prepared.bytes, prepared.mime],
+          "INSERT INTO import_images(draft_id,original_image,original_mime,prepared_image,prepared_mime,original_asset_id,prepared_asset_id) VALUES($1,$2,$3,$4,$5,$6,$7)",
+          [
+            id,
+            orig.bytes,
+            original.mime,
+            prep.bytes,
+            prepared.mime,
+            orig.assetId,
+            prep.assetId,
+          ],
         );
+      }
       await audit(tx, actor, "createImport", id, {
         kind: a.kind,
         date: a.date,
@@ -375,6 +418,26 @@ export async function setDraftDeleted(
   );
 }
 
+export async function imageAssetForDraft(
+  actor: string,
+  id: string,
+  prepared: boolean,
+) {
+  return (await getDb()).transaction(async (tx) => {
+    await draftRow(tx, actor, id);
+    const row = (
+      await tx.query<{
+        original_asset_id: string | null;
+        prepared_asset_id: string | null;
+      }>(
+        "SELECT original_asset_id,prepared_asset_id FROM import_images WHERE draft_id=$1",
+        [id],
+      )
+    ).rows[0];
+    ensure(row, "原图不存在", 404);
+    return prepared ? row.prepared_asset_id : row.original_asset_id;
+  });
+}
 export async function imageForDraft(
   actor: string,
   id: string,
@@ -385,6 +448,8 @@ export async function imageForDraft(
   const image = (
     await db.query<{
       original_image: Uint8Array;
+      original_asset_id: string | null;
+      prepared_asset_id: string | null;
       original_mime: string;
       prepared_image: Uint8Array;
       prepared_mime: string;
@@ -392,8 +457,14 @@ export async function imageForDraft(
   ).rows[0];
   ensure(image, "原图不存在", 404);
   return prepared
-    ? { bytes: image.prepared_image, mime: image.prepared_mime }
-    : { bytes: image.original_image, mime: image.original_mime };
+    ? {
+        bytes: await loadBlob(image.prepared_image, image.prepared_asset_id),
+        mime: image.prepared_mime,
+      }
+    : {
+        bytes: await loadBlob(image.original_image, image.original_asset_id),
+        mime: image.original_mime,
+      };
 }
 export async function saveDraft(
   actor: string,
@@ -614,15 +685,21 @@ export async function extractDraft(
         ? (
             await tx.query<{
               prepared_image: Uint8Array;
+              prepared_asset_id: string | null;
               prepared_mime: string;
             }>(
-              "SELECT prepared_image,prepared_mime FROM import_images WHERE draft_id=$1",
+              "SELECT prepared_image,prepared_mime,prepared_asset_id FROM import_images WHERE draft_id=$1",
               [id],
             )
           ).rows[0]
         : null;
     // Older saved drafts may still contain an oversized prepared image.
     if (image) {
+      image.prepared_image = await loadBlob(
+        image.prepared_image,
+        image.prepared_asset_id,
+        tx,
+      );
       const raster = sharp(image.prepared_image, {
         limitInputPixels: 24000000,
       });
@@ -641,9 +718,14 @@ export async function extractDraft(
           .jpeg({ quality: 94 })
           .toBuffer();
         image.prepared_mime = "image/jpeg";
+        const stored = await storeBlob(
+          tx,
+          image.prepared_image,
+          image.prepared_mime,
+        );
         await tx.query(
-          "UPDATE import_images SET prepared_image=$1,prepared_mime=$2 WHERE draft_id=$3",
-          [image.prepared_image, image.prepared_mime, id],
+          "UPDATE import_images SET prepared_image=$1,prepared_mime=$2,prepared_asset_id=$4 WHERE draft_id=$3",
+          [stored.bytes, image.prepared_mime, id, stored.assetId],
         );
       }
     }

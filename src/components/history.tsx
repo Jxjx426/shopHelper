@@ -1,4 +1,7 @@
 "use client";
+import { startFileRequest } from "@/lib/cloud-request.client";
+import { waitCloudJob } from "@/lib/cloud-jobs.client";
+import { downloadTicket } from "@/lib/file-transfer.client";
 import { allowed } from "@/lib/permissions";
 import { useEffect, useState } from "react";
 import { money, type Order } from "@/lib/domain";
@@ -109,12 +112,21 @@ export default function History({
         to: filter.to,
         query: filter.query,
       });
-      const response = await fetch(`/api/documents/export?${params}`, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(60000),
-      });
+      const response = await startFileRequest(
+        `/api/documents/export?${params}`,
+        {
+          cache: "no-store",
+          signal: AbortSignal.timeout(60000),
+        },
+      );
       if (!response.ok)
         throw new Error((await response.json()).error ?? "导出失败，请重试");
+      if (response.status === 202) {
+        const ticket = await waitCloudJob(await response.json());
+        await downloadTicket(ticket);
+        setExportMessage(`已导出 ${ticket.count} 份已定稿单据`);
+        return;
+      }
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement("a");
       a.href = url;

@@ -5,6 +5,9 @@ const config: NextConfig = {
   outputFileTracingExcludes: {
     "/*": ["./data/**/*", "./test-results/**/*", "./output/**/*", "./.env*"],
   },
+  outputFileTracingIncludes: {
+    "/*": ["./assets/pdf-fonts/**/*", "./assets/*ca*.crt"],
+  },
   async headers() {
     return [
       {

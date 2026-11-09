@@ -31,8 +31,9 @@ export async function makeSession(tx: Transaction, userId: string) {
 export async function getSession(token?: string) {
   if (!token) return null;
   const db = await getDb();
-  const result = await db.query<CurrentUser>(
-    "SELECT u.id,u.name,u.username,u.role,u.can_import,u.can_finalize FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active=true AND u.role IN ('owner','admin','staff')",
+  const prefix = db.read ? "shop_private." : "";
+  const result = await (db.read ?? db.query.bind(db))<CurrentUser>(
+    `SELECT u.id,u.name,u.username,u.role,u.can_import,u.can_finalize FROM ${prefix}users u JOIN ${prefix}sessions s ON s.user_id=u.id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active=true AND u.role IN ('owner','admin','staff')`,
     [tokenHash(token)],
   );
   return result.rows[0] ?? null;

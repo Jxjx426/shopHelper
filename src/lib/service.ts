@@ -1,3 +1,4 @@
+import { loadBlob } from "./file-store.server";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getDb, type Transaction } from "./db";
@@ -775,6 +776,14 @@ export async function runAction(
   requestId: string,
   input: unknown,
 ) {
+  return runActionIn(await getDb(), actor, requestId, input);
+}
+export async function runActionIn(
+  db: import("./db").Database,
+  actor: string,
+  requestId: string,
+  input: unknown,
+) {
   ensure(/^[a-zA-Z0-9-]{16,100}$/.test(requestId), "操作编号无效，请刷新页面");
   const parsed = actionSchema.safeParse(input);
   ensure(
@@ -784,7 +793,6 @@ export async function runAction(
   const hash = createHash("sha256")
     .update(JSON.stringify(parsed.data))
     .digest("hex");
-  const db = await getDb();
   try {
     return await db.transaction(async (tx) => {
       await requirePermission(tx, actor, actionPermission(parsed.data!.action));
@@ -823,9 +831,10 @@ export async function runAction(
 
 export async function exportBackup() {
   const db = await getDb();
-  return db.transaction(backupIn);
+  const data = await db.transaction(collectBackupIn);
+  return finishBackup(data);
 }
-export async function backupIn(tx: Transaction) {
+export async function collectBackupIn(tx: Transaction) {
   const tables: Record<string, unknown[]> = {};
   // Sessions, password hashes and API keys intentionally never leave the server.
   for (const table of [
@@ -850,12 +859,12 @@ export async function backupIn(tx: Transaction) {
     ).rows;
   tables.import_images = (
     await tx.query(
-      "SELECT draft_id,original_mime,encode(original_image,'base64') original_base64,prepared_mime,encode(prepared_image,'base64') prepared_base64 FROM import_images",
+      "SELECT draft_id,original_mime,encode(original_image,'base64') original_base64,prepared_mime,encode(prepared_image,'base64') prepared_base64,original_asset_id,prepared_asset_id FROM import_images",
     )
   ).rows;
   tables.documents = (
     await tx.query(
-      "SELECT id,order_id,number,revision,sequence_no::text,snapshot,pdf_sha256,superseded_at,created_by,created_at,encode(pdf,'base64') pdf_base64,encode(superseded_pdf,'base64') superseded_base64 FROM documents",
+      "SELECT id,order_id,number,revision,sequence_no::text,snapshot,pdf_sha256,superseded_at,created_by,created_at,encode(pdf,'base64') pdf_base64,encode(superseded_pdf,'base64') superseded_base64,pdf_asset_id,superseded_asset_id FROM documents",
     )
   ).rows;
   const actors = (await tx.query("SELECT id,name,role FROM users")).rows;
@@ -867,6 +876,36 @@ export async function backupIn(tx: Transaction) {
     actors,
     tables,
   };
+  return data;
+}
+export async function finishBackup(
+  data: Awaited<ReturnType<typeof collectBackupIn>>,
+  tx?: Transaction,
+) {
+  for (const image of data.tables.import_images as Record<string, any>[]) {
+    for (const part of ["original", "prepared"]) {
+      if (!image[`${part}_base64`])
+        image[`${part}_base64`] = (
+          await loadBlob(null, image[`${part}_asset_id`], tx)
+        ).toString("base64");
+      delete image[`${part}_asset_id`];
+    }
+  }
+  for (const doc of data.tables.documents as Record<string, any>[]) {
+    if (!doc.pdf_base64)
+      doc.pdf_base64 = (await loadBlob(null, doc.pdf_asset_id, tx)).toString(
+        "base64",
+      );
+    if (!doc.superseded_base64 && doc.superseded_asset_id)
+      doc.superseded_base64 = (
+        await loadBlob(null, doc.superseded_asset_id, tx)
+      ).toString("base64");
+    delete doc.pdf_asset_id;
+    delete doc.superseded_asset_id;
+  }
   const { backupChecksum } = await import("./backup-checksum");
   return { ...data, checksum: backupChecksum(data) };
+}
+export async function backupIn(tx: Transaction) {
+  return finishBackup(await collectBackupIn(tx), tx);
 }

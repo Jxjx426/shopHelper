@@ -1,4 +1,7 @@
 "use client";
+import { startFileRequest } from "@/lib/cloud-request.client";
+import { waitCloudJob } from "@/lib/cloud-jobs.client";
+import { downloadTicket } from "@/lib/file-transfer.client";
 import { useState } from "react";
 import {
   ArrowDown,
@@ -450,9 +453,15 @@ export default function ShopSettings(
     setExporting(true);
     setBackupError("");
     try {
-      const response = await fetch("/api/backup", { cache: "no-store" });
+      const response = await startFileRequest("/api/backup", {
+        cache: "no-store",
+      });
       if (!response.ok)
         throw new Error("数据导出失败，请确认仍已登录，然后重试。");
+      if (response.status === 202) {
+        await downloadTicket(await waitCloudJob(await response.json()));
+        return;
+      }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

@@ -296,7 +296,8 @@ export default function ScreenshotEditor({
           </div>
           <p className="inline-note">
             {crop ? "已选择裁剪区域" : "使用整张截图"} · 已遮盖 {masks.length}{" "}
-            处。只有处理后的图片会发送给 Gemini；原图仅保存在本机服务端供审核。
+            处。保存时上传至店铺私有存储（云端版为
+            Supabase）。只有处理图会在确认后发给 Gemini。
           </p>
         </>
       )}

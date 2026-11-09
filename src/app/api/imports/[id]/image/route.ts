@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { failure, requireUser } from "@/lib/http";
-import { imageForDraft } from "@/lib/imports.server";
+import { imageForDraft, imageAssetForDraft } from "@/lib/imports.server";
+import { cloudMode } from "@/lib/cloud-config.server";
+import { redirectAsset } from "@/lib/file-response.server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(
@@ -9,6 +11,14 @@ export async function GET(
 ) {
   try {
     const user = await requireUser(request);
+    if (cloudMode()) {
+      const asset = await imageAssetForDraft(
+        user.id,
+        (await params).id,
+        request.nextUrl.searchParams.get("kind") === "prepared",
+      );
+      if (asset) return redirectAsset(asset, "order-image", false);
+    }
     const image = await imageForDraft(
       user.id,
       (await params).id,

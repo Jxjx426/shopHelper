@@ -1,3 +1,4 @@
+import { cloudMode } from "@/lib/cloud-config.server";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -14,9 +15,6 @@ import { failure, guardOrigin, json, readBody } from "@/lib/http";
 import { AppError } from "@/lib/service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-declare global {
-  var shopLoginAttempts: Map<string, number[]> | undefined;
-}
 export async function GET(request: NextRequest) {
   try {
     const db = await getDb();
@@ -26,6 +24,8 @@ export async function GET(request: NextRequest) {
           "SELECT id FROM users WHERE role IN ('owner','admin') LIMIT 1",
         )
       ).rows.length > 0;
+    if (cloudMode() && !configured)
+      throw new AppError("云端尚未迁移店主账号，请先完成迁移检查", 503);
     return json({
       configured,
       user: await getSession(request.cookies.get(SESSION_COOKIE)?.value),
@@ -47,6 +47,8 @@ export async function POST(request: NextRequest) {
       .safeParse(await readBody(request, 4096));
     if (!body.success) throw new AppError("输入格式无效");
     const a = body.data;
+    if (a.action === "setup" && cloudMode())
+      throw new AppError("云端不开放注册，请使用原店铺迁移工具", 403);
     const db = await getDb();
     if (a.action === "logout") {
       const token = request.cookies.get(SESSION_COOKIE)?.value;
@@ -58,30 +60,27 @@ export async function POST(request: NextRequest) {
       response.cookies.delete(SESSION_COOKIE);
       return response;
     }
-    const attempts = (globalThis.shopLoginAttempts ??= new Map<
-      string,
-      number[]
-    >());
-    const attemptKey = a.username || "owner";
-    if (attempts.size >= 200) {
-      for (const [key, values] of attempts)
-        if (values.every((t) => Date.now() - t > 300000)) attempts.delete(key);
-    }
-    const total = (attempts.get("_all") ?? []).filter(
-      (t) => Date.now() - t < 300000,
-    );
-    if (
-      total.length >= 100 ||
-      (attempts.size >= 200 && !attempts.has(attemptKey))
-    )
-      throw new AppError("尝试次数太多，请5分钟后再试", 429);
-    attempts.set("_all", [...total, Date.now()]);
-    const recent = (attempts.get(attemptKey) ?? []).filter(
-      (t) => Date.now() - t < 300000,
-    );
-    if (recent.length >= 10)
-      throw new AppError("尝试次数太多，请5分钟后再试", 429);
-    attempts.set(attemptKey, [...recent, Date.now()]);
+    const attemptKey = tokenHash(`login:${a.username || "owner"}`);
+    await db.transaction(async (tx) => {
+      await tx.query("DELETE FROM login_attempts WHERE expires_at<now()");
+      for (const [id, limit] of [
+        ["all", 100],
+        [attemptKey, 10],
+      ] as const) {
+        const previous = (
+          await tx.query<{ attempts: number }>(
+            "SELECT attempts FROM login_attempts WHERE id=$1",
+            [id],
+          )
+        ).rows[0];
+        if (previous && previous.attempts >= limit)
+          throw new AppError("尝试次数太多，请5分钟后再试", 429);
+        await tx.query(
+          "INSERT INTO login_attempts(id,attempts,expires_at) VALUES($1,1,now()+interval '5 minutes') ON CONFLICT(id) DO UPDATE SET attempts=login_attempts.attempts+1",
+          [id],
+        );
+      }
+    });
     if (!a.password || a.password.length < 8) throw new AppError("密码至少8位");
     const token = await db.transaction(async (tx) => {
       const existing = (
@@ -112,7 +111,7 @@ export async function POST(request: NextRequest) {
         throw new AppError("登录名或密码不正确，请重新输入", 401);
       return makeSession(tx, existing.id);
     });
-    attempts.delete(attemptKey);
+    await db.query("DELETE FROM login_attempts WHERE id=$1", [attemptKey]);
     const response = json({ ok: true });
     response.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,

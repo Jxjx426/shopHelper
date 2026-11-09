@@ -1,6 +1,6 @@
-# 鲜配助手 — Stage 4
+# 鲜配助手 — Stage 4 + 免费云端适配
 
-可运行的单店本地订单、配货、称重与送货单应用。界面中文，币种 RM，送货日期按 Asia/Kuala_Lumpur。当前完成至 Stage 4：四人独立账号、单服务器共享数据库、自动同步、权限和冲突处理已验证。Stage 5 任务分配未实现。免费部署准备、存储、备份及限制见 [DEPLOYMENT.md](DEPLOYMENT.md)。
+可运行的单店订单、配货、称重与送货单应用，默认仍使用原本地数据库。界面中文，币种 RM，送货日期按 Asia/Kuala_Lumpur。当前完成至 Stage 4：四人独立账号、单服务器共享数据库、自动同步、权限和冲突处理已验证。Stage 5 任务分配未实现。已新增 Netlify + Supabase Free 可选后端、私有文件存储和省流量同步，尚未部署或迁移营业数据。云端准备和限制见 [CLOUD-SETUP.md](CLOUD-SETUP.md)，本地部署见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 ## 启动
 
@@ -80,7 +80,7 @@ npm test
 npm run build
 ```
 
-当前92项测试使用 `test-results` 中的隔离数据库，覆盖四个员工独立会话、同项/不同项并发、权限与撤销、幂等重试、备份和进程锁，并覆盖原 Stage 1/2 回归和 Stage 3 的阈值/舍入边界、餐馆专价、历史快照、重复定稿、修订、复制重置、删除恢复、备份损坏/回滚及跨新安装恢复。不会读取或改写营业数据库，也不调用真实 Gemini。
+本地回归测试使用 `test-results` 中的隔离数据库，覆盖四个员工独立会话、同项/不同项并发、权限与撤销、幂等重试、备份和进程锁，并覆盖原 Stage 1/2 回归和 Stage 3 的阈值/舍入边界、餐馆专价、历史快照、重复定稿、修订、复制重置、删除恢复、备份损坏/回滚及跨新安装恢复。不会读取或改写营业数据库，也不调用真实 Gemini。
 
 长中文 PDF 样例在 `output/pdf/stage3-chinese-delivery-order.pdf`。实际以 Poppler 渲染并检查中文、分页、重复表头、末项及总额，另用文本/字符边界检查避免缺字或越界。文件仅为明确标识的人工测试资料。
 
@@ -106,13 +106,13 @@ Next.js App Router / React / TypeScript，PGlite 文件持久 PostgreSQL，Decim
 
 `service.ts` 管目录、任务和价格；`documents.server.ts` 管定稿及版本；`pdf.server.ts` 管排版；`history.server.ts` 管历史及复制预览；`backup.server.ts` 管验证和恢复。Gemini provider 保持独立，只用于明确请求的导入提取；称重、计费、PDF、历史和恢复不调用 AI。
 
-Stage 4 保留单个服务进程的持久 PGlite 数据库，四部手机通过同一服务器共享数据，前台约两秒轮询。版本冲突不覆盖本机输入；网络失败不显示成功，响应丢失用原请求编号重试。权限在服务器和事务中检查，停用/变更权限撤销会话。当前没有外部 PostgreSQL 或对象存储适配，不能把 PGlite 文件目录直接当作多个服务器共享数据库。Stage 5 才做每日任务分配。
+本地模式使用持久 PGlite 和 SSE；可选云端模式使用 Supabase PostgreSQL transaction pooler、跨实例事务锁、私有 Storage 和仅版本号的 Realtime。正常每分钟只检查轻量版本，异常时15秒检查，隐藏/离线停止连接；不再每两秒全量轮询。版本冲突和断网保留输入，幂等编号防止重复写入。权限在服务器及事务中检查，账号变更撤销会话。`npm run test:cloud` 在隔离真实 PostgreSQL 上运行四连接、权限、迁移和恢复测试（无需云账号）。Stage 5 已跳过。
 
 ## Gemini 与费用
 
 本阶段使用 Gemini **Developer API**，不是 Gemini 聊天订阅，也不是 Vertex AI。需要 Google 账号和一个未关联 billing 的 AI Studio / Google Cloud 项目及 Developer API key。不需要付费 Gemini 订阅。应用不会创建账号、关联 billing、启用试用金或购买服务。
 
-只在本机项目根目录 `.env.local` 配置（已创建空配置模板；不要把密钥发送到聊天或填入网页）：
+本机在项目根目录 `.env.local` 配置；未来云端在 Netlify 服务端环境配置（不要把密钥发送到聊天、填入网页或加 NEXT_PUBLIC_ 前缀）：
 
 ```dotenv
 GEMINI_API_KEY=在本机填写你的DeveloperAPI密钥
@@ -127,7 +127,7 @@ GEMINI_MAX_RPD=20
 
 本阶段选择 `gemini-3.1-flash-lite`，支持图像输入、文本输出及结构化结果，Google 当前定价页列出 Standard 免费输入/输出。实际 RPM/TPM/RPD 必须查看你项目的 AI Studio，不沿用旧配额数字，也不保证服务容量。代码的 3 次/分钟、20 次/日只是本店保护上限，并非 Google 保证的额度；跨全部员工共享，按 Pacific 时区每日重置。Google 配额更低时会回退人工审核。参考：[模型](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite)、[定价](https://ai.google.dev/gemini-api/docs/pricing)、[配额](https://ai.google.dev/gemini-api/docs/rate-limits)。
 
-**免费层数据使用**：Google 的 unpaid-service 条款允许将输入和输出用于产品及模型改进，可能由人工审核，并要求不要提交敏感、保密或个人信息。本应用在每次识别前要求明确确认；截图可先裁剪/黑块遮盖。原图仅在本机服务端保存，只有处理后的图发送给 Gemini；删除本机副本不代表删除 Google 已接收的内容。若订单是保密商务信息，请直接手动审核。[Google 条款](https://ai.google.dev/gemini-api/terms)。
+**免费层数据使用**：Google 的 unpaid-service 条款允许将输入和输出用于产品及模型改进，可能由人工审核，并要求不要提交敏感、保密或个人信息。本应用在每次识别前要求明确确认；截图可先裁剪/黑块遮盖。原图保存在店铺服务端（云端模式为店主的 Supabase 私有存储），只有处理后的图发送给 Gemini；删除店铺副本不代表删除 Google 已接收的内容。若订单是保密商务信息，请直接手动审核。[Google 条款](https://ai.google.dev/gemini-api/terms)。
 
 不发送价格表或其他餐馆历史记录；提取 schema 不接受价格和总额。金额、价格优先级和换算由应用代码计算。`GEMINI_API_KEY`、`GEMINI_MODEL` 只在服务端读取，不使用 `NEXT_PUBLIC_`，不会加入 Git、浏览器代码、日志或数据导出。
 
@@ -138,8 +138,6 @@ provider 使用统一 `OrderExtractionProvider` 接口；未来更换免费模�
 截图一次一张，仅 PNG/JPEG/WebP、5MB 以内、最多 2400 万像素；超长订单可先分图，逐份审核追加。HEIC、PDF、SVG 和动画不支持。原图去除元数据后以 PNG 保存，识别图以 JPEG 保存；识别图最长宽度 1600、高度 12000、最多 1200 万像素，不放大小图。过长截图若缩小后不足 900 像素宽（原图不足 900 则保留原宽），会要求裁剪/分图，避免字太小。原图像素内容保留供审核。手动补充文字不调用 AI。
 
 本地运行无需订阅。云托管、域名、独立备份和运维若以后需要，必须另行选择与说明费用；当前未开通任何付费服务。
-
-
 
 ## Stage 4 四会话 HTTP 检查
 
@@ -152,3 +150,5 @@ provider 使用统一 `OrderExtractionProvider` 接口；未来更换免费模�
 PDF 只显示 Order List、餐馆、送货日期、单号、商品明细及最终总额；隐藏打印版本、小计和舍入调整，保留原有计算与最终舍入规则。现有单据默认按已保存的历史快照重排为简版，原始 PDF 字节和财务快照仍保存在数据库/备份中，不改历史价格或金额。
 
 「今日订单 → 历史订单」填写起止日期后点「合并 PDF」；同一天可把起止日期设为相同，或点「仅选当天」。餐馆名称留空为全部，也可筛选餐馆。只导出范围内最新已定稿且未删除的单，每单独立起页，不重复导出旧版本或未定稿单。一次最多一年、500份单据、20000行，超出时提示缩短范围。无需新增服务或账号，不调用 AI。
+
+云端适配验证及免费容量、账号、迁移、备份、尚未验证的真实平台行为见 [CLOUD-SETUP.md](CLOUD-SETUP.md)。`cloud:init` 和 `cloud:migrate` 默认 dry run，只有明确传 `--apply` 才写远端；迁移另需 `--source-backup`。本轮没有执行真实迁移或部署。

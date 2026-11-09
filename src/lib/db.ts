@@ -4,8 +4,12 @@ import path from "node:path";
 import { requestSession } from "./request-session.server";
 import { AppError } from "./errors";
 import { acquireDatabaseLock } from "./database-lock.server";
+import { cloudMode, cloudConfig } from "./cloud-config.server";
+import { syncSchema } from "./sync-schema";
+import type { Database, Transaction } from "./database-types";
+export type { Database, Transaction } from "./database-types";
 // Internal additive migration revision; business backup format remains version 3.
-const SCHEMA_REVISION = 9;
+const SCHEMA_REVISION = 12;
 
 export const schema = `
 CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY);
@@ -94,15 +98,59 @@ CREATE TABLE IF NOT EXISTS app_state (id integer PRIMARY KEY CHECK(id=1), genera
 INSERT INTO app_state(id) VALUES(1) ON CONFLICT DO NOTHING;
 CREATE SEQUENCE IF NOT EXISTS restaurant_price_version;
 SELECT setval('restaurant_price_version',greatest((SELECT last_value FROM restaurant_price_version),coalesce((SELECT max(version) FROM restaurant_prices),1)),true);
+CREATE TABLE IF NOT EXISTS file_assets (id text PRIMARY KEY, mime text NOT NULL, size bigint NOT NULL, parts jsonb NOT NULL, kind text NOT NULL DEFAULT 'business', expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE import_images ALTER COLUMN original_image DROP NOT NULL;
+ALTER TABLE import_images ALTER COLUMN prepared_image DROP NOT NULL;
+ALTER TABLE import_images ADD COLUMN IF NOT EXISTS original_asset_id text REFERENCES file_assets(id);
+ALTER TABLE import_images ADD COLUMN IF NOT EXISTS prepared_asset_id text REFERENCES file_assets(id);
+ALTER TABLE documents ALTER COLUMN pdf DROP NOT NULL;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS pdf_asset_id text REFERENCES file_assets(id);
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS superseded_asset_id text REFERENCES file_assets(id);
+ALTER TABLE restore_previews ADD COLUMN IF NOT EXISTS payload_asset_id text REFERENCES file_assets(id);
+CREATE TABLE IF NOT EXISTS staged_uploads(id text PRIMARY KEY,actor_id text NOT NULL REFERENCES users(id),kind text NOT NULL,mime text NOT NULL,size bigint NOT NULL,parts jsonb NOT NULL,expires_at timestamptz NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS cloud_jobs(id text PRIMARY KEY,actor_id text REFERENCES users(id),session_hash text,kind text NOT NULL,input jsonb NOT NULL,status text NOT NULL DEFAULT 'queued',token_hash text NOT NULL,response jsonb,error text,started_at timestamptz,finished_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),dedupe_key text UNIQUE);
+ALTER TABLE cloud_jobs ADD COLUMN IF NOT EXISTS receipt_hash text;
+CREATE TABLE IF NOT EXISTS document_views(cache_key text PRIMARY KEY,asset_id text NOT NULL REFERENCES file_assets(id),created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS backup_records(id text PRIMARY KEY,asset_id text NOT NULL REFERENCES file_assets(id),kind text NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS login_attempts(id text PRIMARY KEY,attempts integer NOT NULL,expires_at timestamptz NOT NULL);
 `;
 
 declare global {
-  var shopDatabase: Promise<PGlite> | undefined;
+  var shopDatabase: Promise<Database> | undefined;
   var shopDatabaseSchema: number | undefined;
   var shopDatabaseGuards: WeakSet<PGlite> | undefined;
   var shopDatabaseLocks: WeakSet<PGlite> | undefined;
 }
-export async function getDb() {
+export async function getDb(): Promise<Database> {
+  if (cloudMode()) {
+    if (!globalThis.shopDatabase)
+      globalThis.shopDatabase = (async () => {
+        const config = cloudConfig();
+        const { createPostgresDatabase } = await import("./postgres.server");
+        const { cloudPoolConfig } = await import("./cloud-pool-config.server");
+        const db = createPostgresDatabase(
+          await cloudPoolConfig(config.databaseUrl),
+        );
+        try {
+          const version = await db.query(
+            "SELECT version FROM cloud_schema_version WHERE id=1",
+          );
+          if (version.rows[0]?.version !== 1)
+            throw new Error("migration required");
+        } catch {
+          await db.close();
+          throw new AppError(
+            "云端数据库尚未初始化或连接失败，请先完成云端检查；不会回退到本机空库",
+            503,
+          );
+        }
+        return db;
+      })().catch((error) => {
+        globalThis.shopDatabase = undefined;
+        throw error;
+      });
+    return globalThis.shopDatabase;
+  }
   if (
     !globalThis.shopDatabase ||
     globalThis.shopDatabaseSchema !== SCHEMA_REVISION
@@ -115,12 +163,13 @@ export async function getDb() {
         path.join(process.cwd(), "data", "postgres");
       await mkdir(directory, { recursive: true });
       const locks = (globalThis.shopDatabaseLocks ??= new WeakSet<PGlite>());
-      const old = prior ? await prior : null;
+      const old = prior ? ((await prior) as PGlite) : null;
       const release =
         old && locks.has(old) ? null : await acquireDatabaseLock(directory);
-      const db = prior ? await prior : new PGlite(directory);
+      const db = (prior ? await prior : new PGlite(directory)) as PGlite;
       await db.waitReady;
       await db.exec(schema);
+      await db.exec(syncSchema());
       if (release) {
         locks.add(db);
         const close = db.close.bind(db);
@@ -172,5 +221,3 @@ export async function getDb() {
   }
   return globalThis.shopDatabase;
 }
-export type Database = Awaited<ReturnType<typeof getDb>>;
-export type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
