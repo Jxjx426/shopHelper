@@ -185,13 +185,15 @@ before(async () => {
     [owner],
   );
   bundle = await migrationSource(source);
+  const testPort = Number(process.env.SHOP_TEST_PG_PORT ?? 55440);
+  assert(Number.isInteger(testPort) && testPort >= 1024 && testPort <= 65535);
   pg = new EmbeddedPostgres({
     databaseDir: path.join(
       process.cwd(),
       "test-results",
       `pg-cloud-${randomUUID()}`,
     ),
-    port: 55440,
+    port: testPort,
     user: "postgres",
     password: "isolated-test-only",
     // Keep the isolated test directory for diagnosis. On Windows, deleting
@@ -206,8 +208,7 @@ before(async () => {
   await pg.initialise();
   await pg.start();
   const options = {
-    connectionString:
-      "postgresql://postgres:isolated-test-only@127.0.0.1:55440/postgres",
+    connectionString: `postgresql://postgres:isolated-test-only@127.0.0.1:${testPort}/postgres`,
     ssl: false as const,
   };
   pool = new Pool(options);
@@ -330,7 +331,7 @@ cloudTest(
             action: "saveActual",
             id: item.id,
             version: item.version,
-              quantity: ["9.6","9.7","9.8","9.9"][n],
+            quantity: ["9.6", "9.7", "9.8", "9.9"][n],
             unit: "kg",
           },
           n,
@@ -529,6 +530,34 @@ cloudTest(
       count = objects.size;
     assert.deepEqual(await cloudDocumentAsset(originalDoc), firstPdf);
     assert.equal(objects.size, count);
+    await assert.rejects(
+      cloudDocumentAsset(originalDoc, false, "en"),
+      /补填英文商品名/,
+    );
+    const oldBytes = Buffer.from((await documentPdf(originalDoc)).bytes);
+    await db.query(
+      "UPDATE products SET english_name='Apple' WHERE id=(SELECT snapshot->'items'->0->>'productId' FROM documents WHERE id=$1)",
+      [originalDoc],
+    );
+    const english = await cloudDocumentAsset(originalDoc, false, "en");
+    assert.notEqual(english.id, firstPdf.id);
+    assert.deepEqual(
+      await cloudDocumentAsset(originalDoc, false, "en"),
+      english,
+    );
+    await db.query(
+      "UPDATE products SET english_name='Fresh Apple' WHERE id=(SELECT snapshot->'items'->0->>'productId' FROM documents WHERE id=$1)",
+      [originalDoc],
+    );
+    assert.notEqual(
+      (await cloudDocumentAsset(originalDoc, false, "en")).id,
+      english.id,
+    );
+    assert.deepEqual(
+      Buffer.from((await documentPdf(originalDoc)).bytes),
+      oldBytes,
+    );
+    assert.deepEqual(await cloudDocumentAsset(originalDoc), firstPdf);
   },
 );
 cloudTest(
@@ -606,6 +635,24 @@ cloudTest(
     );
     assert.equal(full.tables.documents[0].snapshot.items[0].price, "6.00");
     assert(!JSON.stringify(full).includes("password_hash"));
+    const pdfJob = await createCloudJob(owner, tokenHash(token), {
+      kind: "pdf-range",
+      from: "2026-11-07",
+      to: "2026-11-07",
+      language: "en",
+      summary: "first",
+    });
+    const dispatched = dispatches.find((d) => d.id === pdfJob.jobId)!;
+    await processCloudJob(dispatched.id, dispatched.secret);
+    const pdfStatus = await jobStatus(owner, pdfJob.jobId);
+    assert.equal(pdfStatus.status, "succeeded");
+    const pdfResponse = (
+      await db.query<any>("SELECT response FROM cloud_jobs WHERE id=$1", [
+        pdfJob.jobId,
+      ])
+    ).rows[0].response;
+    assert(pdfResponse.filename.endsWith("-en.pdf"));
+    assert.equal(pdfResponse.count, 1);
   },
 );
 cloudTest(

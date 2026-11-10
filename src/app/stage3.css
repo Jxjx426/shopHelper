@@ -48,6 +48,10 @@
 .document-links > strong {
   display: block;
 }
+.document-links [aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .document-panel details > summary {
   min-height: 48px;
   padding: 10px 0;

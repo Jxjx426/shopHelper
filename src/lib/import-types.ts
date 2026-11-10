@@ -10,6 +10,7 @@ export type ReviewLine = {
   productId: string;
   quantity: string;
   unit: Unit | "";
+  unitNote?: string;
   matchedBy:
     "name" | "alias" | "ambiguous" | "suggested" | "unknown" | "manual";
   candidates: string[];

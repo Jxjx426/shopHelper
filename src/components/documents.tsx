@@ -4,8 +4,9 @@ import { Download, Share2, FileCheck, FileText } from "lucide-react";
 import { money, type Order, type Workspace } from "@/lib/domain";
 import type { DocumentSnapshot } from "@/lib/documents.server";
 import type { Mutate } from "./types";
-import { ErrorText, Modal } from "./ui";
+import { ErrorText, Modal, Field } from "./ui";
 import { allowed } from "@/lib/permissions";
+import type { PdfLanguage } from "@/lib/pdf-options";
 export type DocumentInfo = {
   id: string;
   number: string;
@@ -15,28 +16,68 @@ export type DocumentInfo = {
 export function DocumentLinks({ document }: { document: DocumentInfo }) {
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState(false);
-  const url = `/api/documents/${document.id}/pdf`;
+  const [language, setLanguage] = useState<PdfLanguage>("zh");
+  const [checkVersion, setCheckVersion] = useState(0);
+  const [readyUrl, setReadyUrl] = useState("");
+  const [languageError, setLanguageError] = useState("");
+  const url = `/api/documents/${document.id}/pdf?language=${language}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    setLanguageError("");
+    if (language === "zh") {
+      setReadyUrl(url);
+      return;
+    }
+    setReadyUrl("");
+    void fetch(`${url}&check=1`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (r) => {
+        const result = await r.json();
+        if (!r.ok) throw new Error(result.error ?? "无法检查英文商品名");
+        if (!controller.signal.aborted) setReadyUrl(url);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setLanguageError(e.message);
+      });
+    return () => controller.abort();
+  }, [url, language, checkVersion]);
+  const enabled = language === "zh" || readyUrl === url;
+  const downloadUrl = `${url}&download=1`;
   async function share() {
     setWorking(true);
     setMessage("");
     try {
       const response = await fetch(url);
-      if (!response.ok) throw new Error("无法读取送货单");
-      const file = new File([await response.blob()], `${document.number}.pdf`, {
-        type: "application/pdf",
-      });
+      if (!response.ok)
+        throw new Error((await response.json()).error ?? "无法读取送货单");
+      const file = new File(
+        [await response.blob()],
+        `${document.number}${language === "en" ? "-en" : ""}.pdf`,
+        {
+          type: "application/pdf",
+        },
+      );
       if (navigator.canShare?.({ files: [file] }))
         await navigator.share({ files: [file], title: "送货单" });
       else {
         const a = window.document.createElement("a");
-        a.href = `${url}?download=1`;
-        a.download = `${document.number}.pdf`;
+        const blobUrl = URL.createObjectURL(file);
+        a.href = blobUrl;
+        a.download = `${document.number}${language === "en" ? "-en" : ""}.pdf`;
+        window.document.body.appendChild(a);
         a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
         setMessage("已改用下载，请在手机中手动分享。");
       }
     } catch (error) {
       if ((error as Error).name !== "AbortError")
-        setMessage("分享未完成，请点「下载 PDF」后手动分享。");
+        setMessage(
+          (error as Error).message ||
+            "分享未完成，请点「下载 PDF」后手动分享。",
+        );
     } finally {
       setWorking(false);
     }
@@ -47,23 +88,53 @@ export function DocumentLinks({ document }: { document: DocumentInfo }) {
         {document.number} · 第 {document.revision} 版
         {document.superseded_at ? " · 已被替代" : ""}
       </strong>
+      <Field label="单据语言">
+        <select
+          value={language}
+          disabled={working}
+          onChange={(e) => {
+            setLanguage(e.target.value as PdfLanguage);
+            setMessage("");
+          }}
+        >
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </Field>
+      <ErrorText message={languageError} />
+      {language === "en" && !enabled && !languageError && (
+        <p className="fine-print">正在检查英文商品名…</p>
+      )}
+      {languageError && (
+        <button
+          className="text-button"
+          onClick={() => setCheckVersion((v) => v + 1)}
+        >
+          重新检查
+        </button>
+      )}
       <div className="action-wrap">
         <a
           className="secondary"
-          href={url}
+          href={enabled ? url : undefined}
+          aria-disabled={!enabled}
           target="_blank"
           rel="noopener noreferrer"
         >
           <FileText size={18} />
           预览 PDF
         </a>
-        <a className="secondary" href={`${url}?download=1`}>
+        <a
+          className="secondary"
+          href={enabled ? downloadUrl : undefined}
+          aria-disabled={!enabled}
+        >
           <Download size={18} />
           下载 PDF
         </a>
         <button
           className="secondary"
-          disabled={working}
+          disabled={working || !enabled}
           onClick={() => void share()}
         >
           <Share2 size={18} />

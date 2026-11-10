@@ -296,6 +296,7 @@ export async function createImport(actor: string, key: string, input: unknown) {
       const id = randomUUID();
       const lines =
         a.kind === "text" ? parseTextLocally(text, await catalogIn(tx)) : [];
+      await markRestaurantHeader(tx, a.restaurantId, lines);
       await tx.query(
         "INSERT INTO import_drafts(id,created_by,restaurant_id,delivery_date,source_kind,original_text,source_hash,lines) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
         [
@@ -505,6 +506,13 @@ export async function saveDraft(
               ? original.matchedBy
               : "manual",
         };
+        if (
+          original &&
+          (original.productId !== input.productId ||
+            original.quantity !== input.quantity ||
+            original.unit !== input.unit)
+        )
+          delete line.unitNote;
         if (line.reviewed)
           ensure(
             !lineProblems(line, catalog).length,
@@ -532,6 +540,31 @@ async function catalogIn(tx: Transaction): Promise<Product[]> {
       `SELECT p.*,coalesce((SELECT jsonb_agg(jsonb_build_object('orderUnit',u.order_unit,'billingUnit',u.billing_unit,'price',pr.amount::text)) FROM product_units u LEFT JOIN prices pr ON pr.product_id=u.product_id AND pr.billing_unit=u.billing_unit WHERE u.product_id=p.id),'[]'::jsonb) units FROM products p`,
     )
   ).rows;
+}
+async function markRestaurantHeader(
+  tx: Transaction,
+  restaurantId: string,
+  lines: ReviewLine[],
+) {
+  const restaurant = (
+    await tx.query<Restaurant>(
+      "SELECT name,aliases FROM restaurants WHERE id=$1",
+      [restaurantId],
+    )
+  ).rows[0];
+  if (!restaurant) return;
+  const names = [restaurant.name, ...restaurant.aliases].map(normalizeName);
+  for (const line of lines) {
+    if (
+      !line.productId &&
+      !line.quantity &&
+      names.includes(normalizeName(line.sourceText))
+    ) {
+      line.disposition = "ignored";
+      line.ignoreReason = "餐馆名称或标题";
+      line.extractionIssues = [];
+    }
+  }
 }
 export function restaurantMismatch(
   draft: Pick<
@@ -612,6 +645,7 @@ export async function extractDraft(
       draft.status === "draft"
     ) {
       const local = parseTextLocally(draft.original_text, catalog);
+      await markRestaurantHeader(tx, draft.restaurant_id, local);
       draft.lines = draft.lines.map((line) => {
         // Only untouched blank source rows from older drafts may be filled.
         if (
@@ -865,6 +899,7 @@ export async function extractDraft(
           : null,
         catalog,
       );
+      await markRestaurantHeader(tx, current.restaurant_id, lines);
       if (reservation.targets) {
         const replacements = lines
           .filter((l) => reservation.targets!.has(l.sourceLine))
@@ -1287,9 +1322,14 @@ export async function supplementDraft(
       async () => {
         const draft = await draftRow(tx, actor, id);
         editable(draft, version);
-        const extra = sourceLines(text).map((line, index) =>
-          blankLine(line.text, 0, `manual-${randomUUID()}-${index}`),
+        const extra = parseTextLocally(text, await catalogIn(tx)).map(
+          (line, index) => ({
+            ...line,
+            sourceLine: 0,
+            id: `manual-${randomUUID()}-${index}`,
+          }),
         );
+        await markRestaurantHeader(tx, draft.restaurant_id, extra);
         ensure(
           draft.lines.length + extra.length <= 200,
           "最多200项，请分开处理",

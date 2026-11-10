@@ -168,6 +168,7 @@ export function ProductEditor({
 }) {
   const { data, mutate, busy, error } = props;
   const [name, setName] = useState(product?.name ?? initialName ?? "");
+  const [englishName, setEnglishName] = useState(product?.english_name ?? "");
   const [aliases, setAliases] = useState(product?.aliases.join("\n") ?? "");
   const [zoneId, setZoneId] = useState(
     product?.zone_id ?? data.zones.find((z) => z.active)?.id ?? "",
@@ -208,6 +209,9 @@ export function ProductEditor({
           action: "saveProduct",
           ...(product ? { id: product.id, version: product.version } : {}),
           name,
+          ...(englishName.trim() !== (product?.english_name ?? "")
+            ? { englishName: englishName.trim() }
+            : {}),
           aliases: splitAliases(aliases),
           zoneId,
           sortOrder,
@@ -237,6 +241,14 @@ export function ProductEditor({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="例如：日本 Timun"
+          />
+        </Field>
+        <Field label="英文商品名（选填）" hint="用于英文单据，不会自动翻译。">
+          <input
+            maxLength={80}
+            value={englishName}
+            onChange={(e) => setEnglishName(e.target.value)}
+            placeholder="例如：Japanese Cucumber"
           />
         </Field>
         <div className="two-columns">

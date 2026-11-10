@@ -6,10 +6,15 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 import { getDb } from "../src/lib/db";
 import { hashPassword, makeSession, SESSION_COOKIE } from "../src/lib/auth";
-import { renderDeliveryPdf } from "../src/lib/pdf.server";
+import {
+  renderDeliveryPdf,
+  renderOrderListPdf,
+  combinedDocumentTotal,
+} from "../src/lib/pdf.server";
 import {
   rangeDocumentEntries,
   presentedDocumentPdf,
+  rangeDocumentPdf,
 } from "../src/lib/document-export.server";
 import {
   documentPdf,
@@ -189,4 +194,75 @@ test("simplified presentation leaves original archived bytes and historical amou
     Buffer.from((await documentPdf(historicalId)).bytes),
     archived,
   );
+});
+
+test("range summaries use saved final totals, support first/last/none, and do not re-round the combined amount", async () => {
+  const entries = await rangeDocumentEntries({
+    from: "2026-11-08",
+    to: "2026-11-09",
+  });
+  assert.equal(combinedDocumentTotal(entries), "47.60");
+  const count = (pdf: Buffer) =>
+    (pdf.toString("latin1").match(/\/Type \/Page\b/g) ?? []).length;
+  const first = await rangeDocumentPdf({
+    from: "2026-11-08",
+    to: "2026-11-09",
+  });
+  const last = await rangeDocumentPdf({
+    from: "2026-11-08",
+    to: "2026-11-09",
+    summary: "last",
+  });
+  const none = await rangeDocumentPdf({
+    from: "2026-11-08",
+    to: "2026-11-09",
+    summary: "none",
+  });
+  assert.equal(count(first.bytes), 3);
+  assert.equal(count(last.bytes), 3);
+  assert.equal(count(none.bytes), 2);
+  const cents = entries.map((e, i) => ({
+    snapshot: { ...e.snapshot, total: i ? "0.02" : "0.01" },
+  }));
+  assert.equal(combinedDocumentTotal(cents), "0.03");
+  assert.throws(
+    () =>
+      combinedDocumentTotal([
+        { snapshot: { ...entries[0].snapshot, total: null } },
+      ]),
+    /已定稿/,
+  );
+  assert.throws(
+    () =>
+      combinedDocumentTotal([
+        { snapshot: { ...entries[0].snapshot, draft: true } },
+      ]),
+    /已定稿/,
+  );
+  await writeFile("output/pdf/order-summary-first-zh.pdf", first.bytes);
+  await writeFile("test-results/order-summary-last.pdf", last.bytes);
+  const many = Array.from({ length: 42 }, (_, i) => ({
+    snapshot: {
+      ...entries[0].snapshot,
+      restaurantName: `长名称餐馆 ${i + 1} 分店`,
+      number: `DO-20261108-${String(i + 1).padStart(6, "0")}`,
+    },
+  }));
+  const long = await renderOrderListPdf(many, { summary: "first" });
+  assert(
+    count(long) > 43,
+    "summary must paginate independently of the 42 order pages",
+  );
+  await writeFile("test-results/order-summary-long.pdf", long);
+});
+test("invalid export languages and summary positions are rejected before document generation", async () => {
+  for (const param of ["language=fr", "summary=middle"]) {
+    const response = await GET(
+      new NextRequest(
+        `http://127.0.0.1:3001/api/documents/export?from=2026-11-08&to=2026-11-09&${param}`,
+        { headers: { Cookie: `${SESSION_COOKIE}=${token}` } },
+      ),
+    );
+    assert.equal(response.status, 400);
+  }
 });

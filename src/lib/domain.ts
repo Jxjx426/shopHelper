@@ -116,6 +116,7 @@ export type UnitRule = {
 export type Product = {
   id: string;
   name: string;
+  english_name?: string | null;
   aliases: string[];
   zone_id: string;
   sort_order: number;
@@ -124,6 +125,7 @@ export type Product = {
   units: UnitRule[];
 };
 export type OrderItem = {
+  product_english_name?: string | null;
   last_changed_by?: string | null;
   id: string;
   order_id: string;

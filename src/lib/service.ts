@@ -96,6 +96,12 @@ const schemas = [
     id: id.optional(),
     version: version.optional(),
     name,
+    englishName: z
+      .string()
+      .trim()
+      .max(80)
+      .regex(/^[^\r\n\t\x00-\x1f]*$/, "英文商品名请用一行")
+      .optional(),
     aliases,
     zoneId: id,
     sortOrder: z.number().int().min(0).max(9999),
@@ -514,6 +520,11 @@ export async function apply(
         "INSERT INTO product_units(product_id,order_unit,billing_unit) VALUES($1,$2,$3)",
         [entityId, rule.orderUnit, rule.billingUnit],
       );
+    if (a.englishName !== undefined)
+      await tx.query("UPDATE products SET english_name=$1 WHERE id=$2", [
+        a.englishName || null,
+        entityId,
+      ]);
     for (const [billingUnit, value] of priceMap)
       await tx.query(
         "INSERT INTO prices(product_id,billing_unit,amount) VALUES($1,$2,$3)",
@@ -521,6 +532,7 @@ export async function apply(
       );
     await record(tx, actor, a.action, entityId, {
       name: a.name,
+      ...(a.englishName !== undefined ? { englishName: a.englishName } : {}),
       units: a.units,
     });
     return { id: entityId };
@@ -821,6 +833,15 @@ export async function runActionIn(
   } catch (error) {
     if (error instanceof AppError) throw error;
     const code = (error as { code?: string }).code;
+    if (
+      code === "42703" &&
+      parsed.data.action === "saveProduct" &&
+      parsed.data.englishName !== undefined
+    )
+      throw new AppError(
+        "云端尚未添加英文名称字段，请先完成本次云端更新。原资料未修改。",
+        503,
+      );
     if (code === "23505")
       throw new AppError("名称或当天餐馆订单已存在，请检查后再试", 409);
     if (code === "23503")

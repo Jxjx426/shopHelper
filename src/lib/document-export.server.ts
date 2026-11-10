@@ -7,10 +7,83 @@ import {
   type PdfEntry,
 } from "./pdf.server";
 import type { DocumentSnapshot } from "./documents.server";
+import {
+  pdfSummarySchema,
+  pdfLanguageSchema,
+  type PdfSummary,
+  type PdfLanguage,
+} from "./pdf-options";
+import { normalizeName } from "./import-types";
+
+export async function englishDocumentEntries(
+  entries: readonly PdfEntry[],
+  language: PdfLanguage,
+) {
+  if (language !== "en") return [...entries];
+  const needed = entries.flatMap((e) =>
+    e.snapshot.items.filter((i) => !i.nameEnglish?.trim()),
+  );
+  const products = needed.length
+    ? (
+        await (
+          await getDb()
+        ).query<{
+          id: string;
+          name: string;
+          aliases: string[];
+          english_name: string | null;
+        }>(
+          "SELECT p.id,p.name,p.aliases,to_jsonb(p)->>'english_name' AS english_name FROM products p WHERE p.id=ANY($1::text[]) OR lower(p.name)=ANY($2::text[]) OR EXISTS(SELECT 1 FROM unnest(p.aliases) alias WHERE lower(alias)=ANY($2::text[]))",
+          [
+            needed.map((i) => i.productId).filter(Boolean),
+            [...new Set(needed.map((i) => normalizeName(i.name)))],
+          ],
+        )
+      ).rows
+    : [];
+  const missing = new Set<string>();
+  const result = entries.map((entry) => ({
+    ...entry,
+    snapshot: {
+      ...entry.snapshot,
+      items: entry.snapshot.items.map((item) => {
+        if (item.nameEnglish?.trim()) return { ...item };
+        const exact = item.productId
+          ? products.filter((p) => p.id === item.productId)
+          : products.filter(
+              (p) => normalizeName(p.name) === normalizeName(item.name),
+            );
+        const candidates = exact.length
+          ? exact
+          : item.productId
+            ? []
+            : products.filter((p) =>
+                p.aliases.some(
+                  (a) => normalizeName(a) === normalizeName(item.name),
+                ),
+              );
+        const nameEnglish =
+          candidates.length === 1
+            ? candidates[0].english_name?.trim()
+            : undefined;
+        if (!nameEnglish) missing.add(item.name);
+        return { ...item, ...(nameEnglish ? { nameEnglish } : {}) };
+      }),
+    },
+  }));
+  if (missing.size)
+    throw new AppError(
+      `请先到「设置 → 商品价格」补填英文商品名：${[...missing].slice(0, 12).join("、")}${missing.size > 12 ? ` 等 ${missing.size} 项` : ""}`,
+    );
+  return result;
+}
 
 // Present saved financial snapshots with the current layout. Original PDF bytes
 // and snapshots remain untouched in storage and business backups.
-export async function presentedDocumentPdf(id: string) {
+export async function presentedDocumentEntry(
+  id: string,
+  language: PdfLanguage = "zh",
+) {
   const row = (
     await (
       await getDb()
@@ -21,12 +94,31 @@ export async function presentedDocumentPdf(id: string) {
     }>("SELECT snapshot,number,superseded_at FROM documents WHERE id=$1", [id])
   ).rows[0];
   if (!row) throw new AppError("送货单不存在", 404);
+  const [entry] = await englishDocumentEntries(
+    [
+      {
+        snapshot: row.snapshot,
+        superseded: row.superseded_at
+          ? language === "en"
+            ? "SUPERSEDED"
+            : "已被替代 / SUPERSEDED"
+          : undefined,
+      },
+    ],
+    language,
+  );
+  return { number: row.number, ...entry };
+}
+export async function presentedDocumentPdf(
+  id: string,
+  language: PdfLanguage = "zh",
+) {
+  const entry = await presentedDocumentEntry(id, language);
   return {
-    number: row.number,
-    bytes: await renderDeliveryPdf(
-      row.snapshot,
-      row.superseded_at ? "已被替代 / SUPERSEDED" : undefined,
-    ),
+    number: entry.number,
+    bytes: await renderDeliveryPdf(entry.snapshot, entry.superseded, {
+      language,
+    }),
   };
 }
 export async function rangeDocumentEntries(input: {
@@ -64,7 +156,24 @@ export async function rangeDocumentPdf(input: {
   from: string;
   to: string;
   query?: string;
+  summary?: PdfSummary;
+  language?: PdfLanguage;
 }) {
-  const entries = await rangeDocumentEntries(input);
-  return { bytes: await renderOrderListPdf(entries), count: entries.length };
+  const summary = pdfSummarySchema.safeParse(input.summary ?? "first");
+  if (!summary.success) throw new AppError("请选择有效的汇总页位置");
+  const language = pdfLanguageSchema.safeParse(input.language ?? "zh");
+  if (!language.success) throw new AppError("请选择中文或英文单据");
+  const entries = await englishDocumentEntries(
+    await rangeDocumentEntries(input),
+    language.data,
+  );
+  return {
+    bytes: await renderOrderListPdf(entries, {
+      language: language.data,
+      summary: summary.data,
+      from: input.from,
+      to: input.to,
+    }),
+    count: entries.length,
+  };
 }

@@ -12,6 +12,7 @@
     "test": "tsx --test tests/*.test.ts",
     "cloud:check": "tsx scripts/cloud-check.ts",
     "cloud:init": "tsx scripts/cloud-init.ts",
+    "cloud:upgrade": "tsx scripts/cloud-upgrade.ts",
     "cloud:migrate": "tsx scripts/cloud-migrate.ts",
     "test:cloud": "tsx scripts/cloud-test.ts"
   },

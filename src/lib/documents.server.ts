@@ -30,6 +30,14 @@ export const documentSnapshotSchema = z
       .array(
         z.object({
           name: z.string().max(80),
+          productId: z.string().max(100).optional(),
+          nameEnglish: z
+            .string()
+            .trim()
+            .min(1)
+            .max(80)
+            .regex(/^[^\r\n\t\x00-\x1f]*$/)
+            .optional(),
           quantity: z.string().nullable(),
           unit: z.enum(UNITS).nullable(),
           price: z.string().nullable(),
@@ -64,7 +72,7 @@ export async function loadOrder(
     throw new AppError("订单不存在或已删除", 404);
   const items = (
     await tx.query<OrderItem>(
-      "SELECT i.*,t.state picking_state,t.version task_version FROM order_items i JOIN picking_tasks t ON t.order_item_id=i.id WHERE i.order_id=$1 ORDER BY i.position,i.id",
+      "SELECT i.*,to_jsonb(p)->>'english_name' AS product_english_name,t.state picking_state,t.version task_version FROM order_items i JOIN products p ON p.id=i.product_id JOIN picking_tasks t ON t.order_item_id=i.id WHERE i.order_id=$1 ORDER BY i.position,i.id",
       [id],
     )
   ).rows;
@@ -80,10 +88,17 @@ export async function documentState(tx: Transaction, id: string) {
   const issues: string[] = [];
   if (!order.items.length) issues.push("订单没有商品");
   const items: DocumentSnapshot["items"] = order.items.map((item) => {
+    const label = {
+      productId: item.product_id,
+      ...(item.product_english_name
+        ? { nameEnglish: item.product_english_name }
+        : {}),
+    };
     if (item.picking_state === "pending")
       issues.push(`${item.product_name}：尚未配货`);
     if (item.unavailable)
       return {
+        ...label,
         name: item.product_name,
         quantity: "0",
         unit: item.billing_unit,
@@ -112,6 +127,7 @@ export async function documentState(tx: Transaction, id: string) {
           )
         : null;
     return {
+      ...label,
       name: item.product_name,
       quantity:
         item.actual_confirmed && item.actual_quantity

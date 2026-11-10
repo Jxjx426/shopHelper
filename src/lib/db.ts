@@ -9,7 +9,7 @@ import { syncSchema } from "./sync-schema";
 import type { Database, Transaction } from "./database-types";
 export type { Database, Transaction } from "./database-types";
 // Internal additive migration revision; business backup format remains version 3.
-const SCHEMA_REVISION = 12;
+const SCHEMA_REVISION = 13;
 
 export const schema = `
 CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY);
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS restaurants (id text PRIMARY KEY, name text NOT NULL 
 CREATE UNIQUE INDEX IF NOT EXISTS restaurant_name_unique ON restaurants(lower(name));
 CREATE TABLE IF NOT EXISTS products (id text PRIMARY KEY, name text NOT NULL CHECK(length(name)>0), aliases text[] NOT NULL DEFAULT '{}', zone_id text NOT NULL REFERENCES zones(id), sort_order integer NOT NULL, active boolean NOT NULL DEFAULT true, version integer NOT NULL DEFAULT 1);
 CREATE UNIQUE INDEX IF NOT EXISTS product_name_unique ON products(lower(name));
+ALTER TABLE products ADD COLUMN IF NOT EXISTS english_name text;
 CREATE TABLE IF NOT EXISTS product_units (product_id text NOT NULL REFERENCES products(id), order_unit text NOT NULL, billing_unit text NOT NULL, PRIMARY KEY(product_id,order_unit));
 CREATE TABLE IF NOT EXISTS prices (product_id text NOT NULL REFERENCES products(id), billing_unit text NOT NULL, amount numeric(12,2) CHECK(amount>=0), PRIMARY KEY(product_id,billing_unit));
 CREATE TABLE IF NOT EXISTS orders (id text PRIMARY KEY, restaurant_id text NOT NULL REFERENCES restaurants(id), restaurant_name text NOT NULL, delivery_date date NOT NULL, urgent boolean NOT NULL DEFAULT false, picking_started_at timestamptz, version integer NOT NULL DEFAULT 1, created_at timestamptz NOT NULL DEFAULT now());

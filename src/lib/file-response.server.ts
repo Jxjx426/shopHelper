@@ -3,6 +3,8 @@ import { cloudMode } from "./cloud-config.server";
 import { getDb } from "./db";
 import { fileTicket, storeBlob, hash } from "./file-store.server";
 import { AppError } from "./errors";
+import type { PdfLanguage } from "./pdf-options";
+import { englishDocumentEntries } from "./document-export.server";
 export async function respondFile(
   bytes: Uint8Array,
   mime: string,
@@ -46,7 +48,13 @@ export async function redirectAsset(
   r.headers.set("Cache-Control", "private, no-store");
   return r;
 }
-export async function cloudDocumentAsset(id: string, original = false) {
+export async function cloudDocumentAsset(
+  id: string,
+  original = false,
+  language: PdfLanguage = "zh",
+) {
+  if (original && language !== "zh")
+    throw new AppError("存档原件不能切换语言，请使用英文预览或下载");
   const db = await getDb();
   const row = (
     await db.query<any>(
@@ -60,12 +68,26 @@ export async function cloudDocumentAsset(id: string, original = false) {
       id: row.superseded_asset_id ?? row.pdf_asset_id,
       number: row.number,
     };
+  const [entry] = await englishDocumentEntries(
+    [
+      {
+        snapshot: row.snapshot,
+        superseded: row.superseded_at
+          ? language === "en"
+            ? "SUPERSEDED"
+            : "已被替代 / SUPERSEDED"
+          : undefined,
+      },
+    ],
+    language,
+  );
   const key = hash(
     JSON.stringify([
-      "order-list-layout-v2",
-      row.snapshot,
+      "order-list-layout-v3",
+      entry.snapshot,
       !!row.superseded_at,
       original,
+      language,
     ]),
   );
   let asset = (
@@ -75,9 +97,15 @@ export async function cloudDocumentAsset(id: string, original = false) {
     )
   ).rows[0]?.asset_id;
   if (!asset) {
-    const { presentedDocumentPdf } = await import("./document-export.server"),
+    const { renderDeliveryPdf } = await import("./pdf.server"),
       { documentPdf } = await import("./documents.server");
-    const pdf = await (original ? documentPdf(id) : presentedDocumentPdf(id));
+    const pdf = original
+      ? await documentPdf(id)
+      : {
+          bytes: await renderDeliveryPdf(entry.snapshot, entry.superseded, {
+            language,
+          }),
+        };
     asset = await db.transaction(async (tx) => {
       const stored = await storeBlob(tx, pdf.bytes, "application/pdf");
       await tx.query(

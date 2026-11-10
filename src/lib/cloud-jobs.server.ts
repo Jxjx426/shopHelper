@@ -9,6 +9,7 @@ import { requirePermission } from "./permissions.server";
 import { requestSession } from "./request-session.server";
 import { jobContext } from "./cloud-job-context.server";
 import { AppError } from "./errors";
+import { pdfSummarySchema, pdfLanguageSchema } from "./pdf-options";
 const inputSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("backup"),
@@ -28,6 +29,8 @@ const inputSchema = z.discriminatedUnion("kind", [
     from: z.string().max(10),
     to: z.string().max(10),
     query: z.string().max(80).default(""),
+    summary: pdfSummarySchema.default("first"),
+    language: pdfLanguageSchema.default("zh"),
   }),
 ]);
 declare global {
@@ -244,7 +247,7 @@ export async function processCloudJob(id: string, secret: string) {
           );
           response = {
             assetId: file.assetId,
-            filename: `Order-List-${job.input.from}-${job.input.to}.pdf`,
+            filename: `Order-List-${job.input.from}-${job.input.to}${job.input.language === "en" ? "-en" : ""}.pdf`,
             count: result.count,
           };
         } else {

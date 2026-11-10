@@ -8,6 +8,7 @@ import { money, type Order } from "@/lib/domain";
 import type { ViewProps } from "./types";
 import { ErrorText, Field, Modal } from "./ui";
 import { DocumentLinks, type DocumentInfo } from "./documents";
+import type { PdfSummary, PdfLanguage } from "@/lib/pdf-options";
 type Entry = Omit<Order, "items"> & { item_count: number };
 type CopyReview = {
   sourceVersion: number;
@@ -61,6 +62,8 @@ export default function History({
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
+  const [summary, setSummary] = useState<PdfSummary>("first");
+  const [language, setLanguage] = useState<PdfLanguage>("zh");
   const [deleting, setDeleting] = useState(false);
   const [copy, setCopy] = useState(false);
   const [date, setDate] = useState(data.date);
@@ -111,6 +114,8 @@ export default function History({
         from: filter.from,
         to: filter.to,
         query: filter.query,
+        summary,
+        language,
       });
       const response = await startFileRequest(
         `/api/documents/export?${params}`,
@@ -130,7 +135,7 @@ export default function History({
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Order-List-${filter.from}-${filter.to}.pdf`;
+      a.download = `Order-List-${filter.from}-${filter.to}${language === "en" ? "-en" : ""}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -187,6 +192,29 @@ export default function History({
               value={filter.to}
               onChange={(e) => setFilter({ ...filter, to: e.target.value })}
             />
+          </Field>
+        </div>
+        <div className="two-columns">
+          <Field label="单据语言">
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as PdfLanguage)}
+              disabled={exporting}
+            >
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </Field>
+          <Field label="PDF 汇总页">
+            <select
+              value={summary}
+              onChange={(e) => setSummary(e.target.value as PdfSummary)}
+              disabled={exporting}
+            >
+              <option value="first">第一页</option>
+              <option value="last">最后一页</option>
+              <option value="none">不加汇总页</option>
+            </select>
           </Field>
         </div>
         <label className="check-line">
