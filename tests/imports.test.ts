@@ -27,6 +27,7 @@ import {
   type OrderExtractionProvider,
 } from "../src/lib/gemini.server";
 import { blankLine, type ExtractionResult } from "../src/lib/extraction";
+import { validateBackup } from "../src/lib/backup.server";
 const actor = randomUUID(),
   stranger = randomUUID();
 let zone: string, product: string, japanese: string, box: string;
@@ -984,4 +985,134 @@ test("conflicting alias creation fails atomically without creating an order", as
       (o) => o.restaurant_id === d.restaurant_id,
     ),
   );
+});
+
+test("unique saved units survive draft saving and confirmation; exact restaurant headers stay outside picking demand", async () => {
+  const r = await restaurant("唯一单位测试餐馆");
+  let d = await draft("唯一单位测试餐馆\nTimun 5", r);
+  assert.equal(d.lines[0].disposition, "ignored");
+  assert.equal(d.lines[0].reviewed, false);
+  assert.equal(d.lines[1].quantity, "5");
+  assert.equal(d.lines[1].unit, "kg");
+  assert.equal(d.lines[1].unitNote, "沿用商品已设单位");
+  assert.equal(d.attempts, 0);
+  await saveDraft(actor, d.id, randomUUID(), {
+    version: d.version,
+    restaurantId: r,
+    lines: serialize(d.lines.map((l) => ({ ...l, reviewed: true }))),
+    sourceChecked: true,
+    restaurantAcknowledged: false,
+  });
+  d = await getDraft(actor, d.id);
+  assert.equal(d.lines[1].unitNote, "沿用商品已设单位");
+  const backup = await validateBackup(await exportBackup());
+  const savedDraft = backup.tables.import_drafts.find(
+    (row: any) => row.id === d.id,
+  ) as any;
+  assert.equal(savedDraft.lines[1].unitNote, "沿用商品已设单位");
+  const confirmed = await confirm(d);
+  assert.equal(confirmed.preview.lines.length, 1);
+  assert.equal(confirmed.preview.lines[0].quantity, "5");
+  assert.equal(confirmed.preview.lines[0].unit, "kg");
+  const order = (await workspace(date)).orders.find(
+    (o) => o.id === confirmed.id,
+  )!;
+  assert.equal(order.items.length, 1);
+  assert.equal(order.items[0].product_id, product);
+});
+test("supplemented text uses the same quantity/unit rules and manual correction clears inferred unit notes", async () => {
+  let d = await draft();
+  await supplementDraft(actor, d.id, randomUUID(), d.version, "Timun 7");
+  d = await getDraft(actor, d.id);
+  const extra = d.lines.at(-1)!;
+  assert.equal(extra.quantity, "7");
+  assert.equal(extra.unit, "kg");
+  assert.equal(extra.unitNote, "沿用商品已设单位");
+  assert.equal(d.attempts, 0);
+  await saveDraft(actor, d.id, randomUUID(), {
+    version: d.version,
+    restaurantId: d.restaurant_id,
+    lines: serialize(
+      d.lines.map((l) => (l.id === extra.id ? { ...l, quantity: "8" } : l)),
+    ),
+    sourceChecked: false,
+    restaurantAcknowledged: false,
+  });
+  const corrected = (await getDraft(actor, d.id)).lines.at(-1)!;
+  assert.equal(corrected.quantity, "8");
+  assert.equal(corrected.unitNote, undefined);
+});
+
+test("table extraction persists literal quantity cells and blank rows through review, preview and confirmation", async () => {
+  const r = await restaurant();
+  const image = await sharp({
+    create: { width: 400, height: 220, channels: 3, background: "white" },
+  })
+    .png()
+    .toBuffer();
+  const file = { mime: "image/png", base64: image.toString("base64") };
+  const created = await createImport(actor, randomUUID(), {
+    restaurantId: r,
+    date,
+    kind: "image",
+    original: file,
+    prepared: file,
+  });
+  let d = await getDraft(actor, created.id);
+  let calls = 0;
+  d = await extract(
+    d,
+    mock(
+      {
+        detectedRestaurant: null,
+        unreadableContent: false,
+        lines: [
+          {
+            sourceLine: 1,
+            sourceText: "本地黄瓜 Timun",
+            productText: "本地黄瓜 Timun",
+            quantity: "0.5",
+            unitText: "kg",
+            quantityText: "500g",
+            quantityStatus: "present",
+            uncertain: false,
+          },
+          {
+            sourceLine: 2,
+            sourceText: "玻璃生菜 Ice Berg Lettuce",
+            productText: "玻璃生菜 Ice Berg Lettuce",
+            quantity: null,
+            unitText: null,
+            quantityText: null,
+            quantityStatus: "blank",
+            uncertain: false,
+          },
+        ],
+      },
+      () => calls++,
+    ),
+  );
+  assert.equal(calls, 1);
+  assert.equal(d.lines[0].productId, product);
+  assert.equal(d.lines[0].quantity, "0.5");
+  assert.equal(d.lines[0].unit, "kg");
+  assert.equal(d.lines[0].sourceText, "本地黄瓜 Timun 500g");
+  assert.equal(d.lines[1].disposition, "ignored");
+  assert(d.lines.every((l) => !l.reviewed));
+  await assert.rejects(
+    previewImport(actor, d.id, d.version, "new"),
+    /确认|核对|处理/,
+  );
+  await saveDraft(actor, d.id, randomUUID(), {
+    version: d.version,
+    restaurantId: r,
+    lines: serialize(d.lines.map((l) => ({ ...l, reviewed: true }))),
+    sourceChecked: true,
+    restaurantAcknowledged: false,
+  });
+  d = await getDraft(actor, d.id);
+  const confirmed = await confirm(d);
+  assert.equal(confirmed.preview.lines.length, 1);
+  assert.equal(confirmed.preview.lines[0].quantity, "0.5");
+  assert.equal((await getDraft(actor, d.id)).attempts, 1);
 });

@@ -377,7 +377,7 @@ export default function Orders(
   );
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading orders-heading">
         <div>
           <h1>今日订单</h1>
           <p>
@@ -385,10 +385,13 @@ export default function Orders(
             一家餐馆，一份清楚的订单
           </p>
         </div>
+        <button
+          className="text-button orders-history"
+          onClick={() => setHistory(true)}
+        >
+          历史订单
+        </button>
         <div className="order-entry-actions">
-          <button className="secondary" onClick={() => setHistory(true)}>
-            历史订单
-          </button>
           <button
             className="primary"
             disabled={

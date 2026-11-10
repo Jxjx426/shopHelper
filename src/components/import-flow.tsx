@@ -492,7 +492,17 @@ export default function ImportFlow({
     setLines((current) =>
       current.map((line) =>
         line.id === lineId
-          ? { ...line, ...patch, reviewed: patch.reviewed ?? false }
+          ? {
+              ...line,
+              ...patch,
+              unitNote:
+                patch.productId !== undefined ||
+                patch.quantity !== undefined ||
+                patch.unit !== undefined
+                  ? undefined
+                  : line.unitNote,
+              reviewed: patch.reviewed ?? false,
+            }
           : line,
       ),
     );
@@ -893,7 +903,7 @@ export default function ImportFlow({
                 className="ai-extraction"
                 open={!draft.lines.some((line) => line.productId)}
               >
-                <summary>Gemini 识别与免费层数据说明</summary>
+                <summary>AI 识别 / 数据说明</summary>
                 <div className="privacy-notice">
                   <ShieldCheck size={23} />
                   <div>
@@ -1003,16 +1013,14 @@ export default function ImportFlow({
                   待处理 {unresolved} / {lines.length}
                 </span>
               </div>
-              <p className="fine-print">
-                缺失字段必须手动填写。每一行都需确认，或明确忽略。内容在编辑时保持原位。
-              </p>
               <button
                 className="secondary full"
                 disabled={blocked}
                 onClick={() => {
                   setLines((current) =>
                     current.map((line) =>
-                      !line.extractionIssues.length &&
+                      (line.disposition === "ignored" ||
+                        !line.extractionIssues.length) &&
                       !lineProblems(line, data.products).length
                         ? { ...line, reviewed: true }
                         : line,
@@ -1021,214 +1029,177 @@ export default function ImportFlow({
                   changed();
                 }}
               >
-                我已核对，确认所有填写完整且无警告的项目
+                确认完整项目
+                {lines.some((line) => line.disposition === "ignored")
+                  ? "（含不订购）"
+                  : ""}
               </button>
-              {lines.map((line, index) => {
-                const product = data.products.find(
-                  (p) => p.id === line.productId,
-                );
-                const problems = lineProblems(line, data.products);
-                const rule = product?.units.find(
-                  (u) => u.orderUnit === line.unit,
-                );
-                const aliasAllowed =
-                  allowed(data.user, "manage") &&
-                  Boolean(
-                    line.productText &&
-                    normalizeName(line.sourceText).includes(
-                      normalizeName(line.productText),
-                    ) &&
-                    product &&
-                    normalizeName(product.name) !==
-                      normalizeName(line.productText),
+              {lines
+                .filter((line) => line.disposition !== "ignored")
+                .map((line, index) => {
+                  const product = data.products.find(
+                    (p) => p.id === line.productId,
                   );
-                return (
-                  <article
-                    key={line.id}
-                    className={`review-line ${line.reviewed ? "reviewed" : ""}`}
-                  >
-                    <div className="card-heading">
-                      <strong>
-                        第 {index + 1} 项{" "}
-                        {line.sourceLine
-                          ? `· 原文第 ${line.sourceLine} 行`
-                          : "· 手动补充"}
-                      </strong>
-                      <span
-                        className={`tag ${line.reviewed ? "green" : "amber"}`}
-                      >
-                        {line.reviewed
-                          ? line.disposition === "ignored"
-                            ? "已明确忽略"
-                            : "已确认"
-                          : "待核对"}
-                      </span>
-                    </div>
-                    {line.sourceText && (
-                      <blockquote className="source-line">
-                        {line.sourceText}
-                      </blockquote>
-                    )}
-                    {line.extractionIssues.length > 0 && (
-                      <div className="review-warnings">
-                        {line.extractionIssues.map((issue, i) => (
-                          <p key={i}>⚠ {issue}</p>
-                        ))}
-                      </div>
-                    )}
-                    {line.matchedBy === "ambiguous" && (
-                      <p className="inline-note">
-                        这个别名对应多个商品，请人工选择，不会自动合并。
-                      </p>
-                    )}
-                    <div className="review-disposition">
-                      <button
-                        className={
-                          line.disposition === "item" ? "selected" : ""
-                        }
-                        disabled={blocked}
-                        onClick={() =>
-                          changeLine(line.id, { disposition: "item" })
-                        }
-                      >
-                        订购项目
-                      </button>
-                      <button
-                        className={
-                          line.disposition === "ignored" ? "selected" : ""
-                        }
-                        disabled={blocked}
-                        onClick={() =>
-                          changeLine(line.id, {
-                            disposition: "ignored",
-                            saveAlias: false,
-                          })
-                        }
-                      >
-                        明确忽略此行
-                      </button>
-                    </div>
-                    {line.disposition === "ignored" ? (
-                      <Field label="忽略原因">
-                        <select
-                          value={line.ignoreReason}
-                          disabled={blocked}
+                  const problems = lineProblems(line, data.products);
+                  const aliasAllowed =
+                    allowed(data.user, "manage") &&
+                    Boolean(
+                      line.productText &&
+                      normalizeName(line.sourceText).includes(
+                        normalizeName(line.productText),
+                      ) &&
+                      product &&
+                      normalizeName(product.name) !==
+                        normalizeName(line.productText),
+                    );
+                  return (
+                    <article
+                      key={line.id}
+                      className={`review-line ${line.reviewed ? "reviewed" : ""}`}
+                    >
+                      <label className="review-row-check">
+                        <input
+                          type="checkbox"
+                          aria-label={`确认第${index + 1}项`}
+                          checked={line.reviewed}
+                          disabled={blocked || problems.length > 0}
                           onChange={(e) =>
-                            changeLine(line.id, {
-                              ignoreReason: e.target.value,
-                            })
+                            changeLine(line.id, { reviewed: e.target.checked })
                           }
-                        >
-                          <option value="">请选择原因</option>
-                          <option value="餐馆名称或标题">餐馆名称或标题</option>
-                          <option value="无关聊天内容">无关聊天内容</option>
-                          <option value="重复内容，已在其他行处理">
-                            重复内容，已在其他行处理
-                          </option>
-                          <option value="已对照原图，另行手动补充">
-                            已对照原图，另行手动补充
-                          </option>
-                          <option value="本次不订购此项">本次不订购此项</option>
-                        </select>
-                      </Field>
-                    ) : (
-                      <>
-                        <Field label="匹配商品">
+                        />
+                        <span>{line.sourceText || `第 ${index + 1} 项`}</span>
+                      </label>
+                      {line.extractionIssues.length > 0 && (
+                        <div className="review-warnings">
+                          {line.extractionIssues.map((issue, i) => (
+                            <p key={i}>⚠ {issue}</p>
+                          ))}
+                        </div>
+                      )}
+                      {line.matchedBy === "ambiguous" && (
+                        <p className="inline-note">对应多个商品，请选择。</p>
+                      )}
+                      <div className="review-fields">
+                        <Field label="商品">
                           <select
                             aria-label={`第${index + 1}项匹配商品`}
                             value={line.productId}
                             disabled={blocked}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const selected = data.products.find(
+                                (p) => p.id === e.target.value,
+                              );
+                              const units = [
+                                ...new Set(
+                                  selected?.units.map((u) => u.orderUnit) ?? [],
+                                ),
+                              ];
                               changeLine(line.id, {
                                 productId: e.target.value,
                                 matchedBy: "manual",
                                 saveAlias: false,
-                              })
-                            }
+                                ...(!line.unit && units.length === 1
+                                  ? { unit: units[0] }
+                                  : {}),
+                              });
+                            }}
                           >
-                            <option value="">请选择商品，不会自动新建</option>
+                            <option value="">请选择商品</option>
                             {data.products
                               .filter((p) => p.active)
                               .map((p) => (
                                 <option key={p.id} value={p.id}>
-                                  {line.candidates.includes(p.id) ? "★ " : ""}
                                   {p.name}
                                 </option>
                               ))}
                           </select>
                         </Field>
-                        <button
-                          className="text-button"
-                          disabled={
-                            blocked ||
-                            !data.zones.some((z) => z.active) ||
-                            !allowed(data.user, "manage")
-                          }
-                          onClick={() => setCreatingProduct(line)}
-                        >
-                          <Plus size={18} />
-                          没有这个商品？现在新建
-                        </button>
-                        <div className="quantity-row">
-                          <Field label="订购数量">
-                            <input
-                              aria-label={`第${index + 1}项订购数量`}
-                              inputMode="decimal"
-                              value={line.quantity}
-                              disabled={blocked}
-                              onChange={(e) =>
-                                changeLine(line.id, {
-                                  quantity: e.target.value,
-                                })
-                              }
-                              placeholder="缺失时请填写"
-                              maxLength={12}
-                            />
-                          </Field>
-                          <Field label="订购单位">
-                            <select
-                              aria-label={`第${index + 1}项订购单位`}
-                              value={line.unit}
-                              disabled={blocked}
-                              onChange={(e) =>
-                                changeLine(line.id, {
-                                  unit: e.target.value as Unit,
-                                })
-                              }
-                            >
-                              <option value="">请选择</option>
-                              {line.unit &&
-                                !product?.units.some(
-                                  (u) => u.orderUnit === line.unit,
-                                ) && (
-                                  <option value={line.unit}>
-                                    {line.unit}（待核对）
-                                  </option>
-                                )}
-                              {product?.units.map((u) => (
-                                <option key={u.orderUnit} value={u.orderUnit}>
-                                  {u.orderUnit}
+                        <Field label="数量">
+                          <input
+                            aria-label={`第${index + 1}项订购数量`}
+                            inputMode="decimal"
+                            value={line.quantity}
+                            disabled={blocked}
+                            onChange={(e) =>
+                              changeLine(line.id, { quantity: e.target.value })
+                            }
+                            placeholder="数量"
+                            maxLength={12}
+                          />
+                        </Field>
+                        <Field label="单位">
+                          <select
+                            aria-label={`第${index + 1}项订购单位`}
+                            value={line.unit}
+                            disabled={blocked}
+                            onChange={(e) =>
+                              changeLine(line.id, {
+                                unit: e.target.value as Unit,
+                              })
+                            }
+                          >
+                            <option value="">选择</option>
+                            {line.unit &&
+                              !product?.units.some(
+                                (u) => u.orderUnit === line.unit,
+                              ) && (
+                                <option value={line.unit}>
+                                  {line.unit}（待核对）
                                 </option>
-                              ))}
-                            </select>
-                          </Field>
-                        </div>
-                        {rule && (
-                          <p className="item-meta">
-                            标准售价：{money(rule.price)}
-                            {rule.price !== null
-                              ? ` / ${rule.billingUnit}`
-                              : ""}{" "}
-                            · 由应用读取，不由 AI 提供
-                          </p>
+                              )}
+                            {product?.units.map((u) => (
+                              <option key={u.orderUnit} value={u.orderUnit}>
+                                {u.orderUnit}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      </div>
+                      {line.unitNote && (
+                        <p className="item-meta unit-note">
+                          {line.unitNote}
+                          {line.unitNote === "沿用商品已设单位"
+                            ? `：${line.unit}`
+                            : ""}
+                        </p>
+                      )}
+                      {!line.reviewed && problems.length > 0 && (
+                        <p className="review-problems">{problems.join("；")}</p>
+                      )}
+                      <details className="review-options">
+                        <summary>更多</summary>
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={blocked}
+                          onClick={() =>
+                            changeLine(line.id, {
+                              disposition: "ignored",
+                              ignoreReason: "本次不订购此项",
+                              saveAlias: false,
+                            })
+                          }
+                        >
+                          不订购此项
+                        </button>
+                        {!product && (
+                          <button
+                            type="button"
+                            className="text-button"
+                            disabled={
+                              blocked ||
+                              !data.zones.some((z) => z.active) ||
+                              !allowed(data.user, "manage")
+                            }
+                            onClick={() => setCreatingProduct(line)}
+                          >
+                            <Plus size={18} />
+                            新建商品
+                          </button>
                         )}
                         {line.sourceText && product && (
-                          <details className="alias-details">
-                            <summary>原文叫法 / 保存别名</summary>
-                            <Field
-                              label="原文商品叫法（选填）"
-                              hint="只能使用本行原文中确实出现的叫法。"
-                            >
+                          <>
+                            <Field label="原文叫法（选填）">
                               <input
                                 value={line.productText}
                                 disabled={blocked}
@@ -1253,36 +1224,67 @@ export default function ImportFlow({
                                     })
                                   }
                                 />
-                                确认订单时，将「{line.productText}
-                                」保存为此商品的别名
+                                将「{line.productText}」保存为别名
                               </label>
                             )}
-                          </details>
+                          </>
                         )}
-                      </>
-                    )}
-                    {!line.reviewed && problems.length > 0 && (
-                      <p className="review-problems">{problems.join("；")}</p>
-                    )}
-                    <button
-                      className={
-                        line.reviewed ? "secondary full" : "primary full"
-                      }
-                      disabled={blocked || problems.length > 0}
-                      onClick={() =>
-                        changeLine(line.id, { reviewed: !line.reviewed })
-                      }
-                    >
-                      <Check size={19} />
-                      {line.reviewed
-                        ? "重新编辑此项"
-                        : line.disposition === "ignored"
-                          ? "确认忽略这一行"
-                          : "我已核对，确认此项"}
-                    </button>
-                  </article>
-                );
-              })}
+                      </details>
+                    </article>
+                  );
+                })}
+              {lines.some((line) => line.disposition === "ignored") && (
+                <details className="ignored-lines">
+                  <summary>
+                    不订购 / 标题（
+                    {
+                      lines.filter((line) => line.disposition === "ignored")
+                        .length
+                    }
+                    ）
+                  </summary>
+                  {lines
+                    .filter((line) => line.disposition === "ignored")
+                    .map((line) => (
+                      <div className="ignored-line" key={line.id}>
+                        <label className="check-line">
+                          <input
+                            type="checkbox"
+                            checked={line.reviewed}
+                            disabled={
+                              blocked ||
+                              !!lineProblems(line, data.products).length
+                            }
+                            onChange={(e) =>
+                              changeLine(line.id, {
+                                reviewed: e.target.checked,
+                              })
+                            }
+                          />
+                          <span>
+                            {line.sourceText}
+                            <small>
+                              {line.ignoreReason || "请改为订购或填写忽略原因"}
+                            </small>
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={blocked}
+                          onClick={() =>
+                            changeLine(line.id, {
+                              disposition: "item",
+                              ignoreReason: "",
+                            })
+                          }
+                        >
+                          改为订购
+                        </button>
+                      </div>
+                    ))}
+                </details>
+              )}
               {!lines.length && (
                 <div className="inline-note">
                   尚无可读项目。可用 Gemini 识别，或手动添加，原图始终保留。

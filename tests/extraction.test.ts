@@ -71,13 +71,14 @@ test("local parsing uses exact saved aliases and literal quantities without gues
   assert.equal(lines[0].quantity, "2");
   assert.equal(lines[0].reviewed, false);
   assert.equal(lines[1].productId, "japanese");
-  assert.equal(lines[1].unit, "g");
+  assert.equal(lines[1].unit, "kg");
+  assert.equal(lines[1].quantity, "0.5");
   assert.equal(lines[2].productId, "");
   assert.equal(lines[2].matchedBy, "ambiguous");
-  for (const line of lines.slice(3, 5)) {
-    assert.equal(line.quantity, "");
-    assert.equal(line.unit, "");
-  }
+  assert.equal(lines[3].quantity, "");
+  assert.equal(lines[3].unit, "");
+  assert.equal(lines[4].quantity, "2");
+  assert.equal(lines[4].unit, "");
   assert.equal(lines[5].productId, "");
   assert.equal(lines[5].quantity, "3");
   assert.equal(lines[5].unit, "箱");
@@ -153,7 +154,8 @@ test("mixed-language unit labels normalize while original text and independent u
   const lines = buildReview(raw, null, catalog);
   assert.equal(lines[0].unit, "粒");
   assert.equal(lines[0].sourceText, "包菜3biji");
-  assert.equal(lines[1].unit, "g");
+  assert.equal(lines[1].unit, "kg");
+  assert.equal(lines[1].quantity, "0.3");
   assert.equal(normalizeUnit("batang"), "");
   assert.equal(normalizeUnit("box"), "箱");
 });
@@ -338,3 +340,162 @@ test("truncation, refusal, invalid JSON and network failures preserve failure se
     );
     assert.equal(calls, 1);
   }));
+import { lineProblems } from "../src/lib/extraction";
+const single = (
+  id: string,
+  name: string,
+  aliases: string[],
+  unit: "kg" | "包" | "粒",
+) => ({
+  ...product(id, name, aliases),
+  units: [{ orderUnit: unit, billingUnit: unit, price: "1.00" }],
+});
+const shopCatalog = [
+  single("jp", "日本黄瓜", ["日本timun"], "kg"),
+  single("cu", "黄瓜", ["cucumber"], "kg"),
+  single("sh", "白玉菇", ["shimeji mushroom"], "包"),
+  single("en", "金针菇", ["enoki", "enoki mushroom"], "包"),
+  single("to", "豆腐", ["tofu"], "粒"),
+  single("ch", "Cherry tomato", ["小番茄"], "kg"),
+  single("ok", "羊角豆", ["okra"], "kg"),
+  single("ka", "芥兰", ["kale"], "包"),
+  single("gr", "青龙菜", ["Green dragon cabbage"], "包"),
+  single("ca", "包菜", ["cabbage"], "粒"),
+];
+test("the shop's seven-line pasted order fills literal quantities and unique saved units without AI", () => {
+  const lines = parseTextLocally(
+    "大福屋\n日本黄瓜 2kg\n黄瓜 2kg\n白玉菇 5\nenoki 6\ntofu 5\ncherry tomato 1kg\n羊角豆 1kg",
+    shopCatalog,
+  );
+  assert.deepEqual(
+    lines.slice(1).map((l) => [l.productId, l.quantity, l.unit]),
+    [
+      ["jp", "2", "kg"],
+      ["cu", "2", "kg"],
+      ["sh", "5", "包"],
+      ["en", "6", "包"],
+      ["to", "5", "粒"],
+      ["ch", "1", "kg"],
+      ["ok", "1", "kg"],
+    ],
+  );
+  assert(
+    lines
+      .slice(1)
+      .every(
+        (l) =>
+          !l.reviewed &&
+          !lineProblems(l, shopCatalog).length &&
+          !l.extractionIssues.length,
+      ),
+  );
+  assert(lines.slice(3, 6).every((l) => l.unitNote === "沿用商品已设单位"));
+  assert.equal(lines[0].quantity, "");
+});
+test("bilingual table rows retain right-column quantities, normalize pkt/pcs, convert g with code, and separate blank cells", () => {
+  const rows = [
+    ["包菜 Cabbage", "1pcs", "ca", "1", "粒"],
+    ["芥兰 Kale", "8pkt", "ka", "8", "包"],
+    ["青龙菜 Green Dragon Cabbage", "3pkt", "gr", "3", "包"],
+    ["本地黄瓜 Cucumber", "500g", "cu", "0.5", "kg"],
+    ["日本黄瓜 Japanese Cucumber", "500g", "jp", "0.5", "kg"],
+  ];
+  const raw = result(
+    rows.map(([label, cell]) => ({
+      sourceText: label,
+      productText: label,
+      quantityText: cell,
+      quantityStatus: "present",
+    })),
+  );
+  raw.lines.push({
+    ...result([
+      {
+        sourceText: "玻璃生菜 Ice Berg Lettuce",
+        productText: "玻璃生菜 Ice Berg Lettuce",
+        quantityStatus: "blank",
+      },
+    ]).lines[0],
+    sourceLine: 6,
+  });
+  raw.lines.push({
+    ...result([
+      {
+        sourceText: "香菜 [看不清数量]",
+        productText: "香菜",
+        quantityStatus: "unreadable",
+        uncertain: true,
+      },
+    ]).lines[0],
+    sourceLine: 7,
+  });
+  const lines = buildReview(raw, null, shopCatalog);
+  assert.deepEqual(
+    lines.slice(0, 5).map((l) => [l.productId, l.quantity, l.unit]),
+    rows.map((r) => r.slice(2)),
+  );
+  assert(
+    lines
+      .slice(0, 5)
+      .every(
+        (l) =>
+          !lineProblems(l, shopCatalog).length && !l.extractionIssues.length,
+      ),
+  );
+  assert.equal(lines[5].disposition, "ignored");
+  assert.equal(lines[5].reviewed, false);
+  assert.equal(lines[6].disposition, "item");
+  assert(lines[6].extractionIssues.length);
+  assert.equal(lines[3].sourceText, "本地黄瓜 Cucumber 500g");
+});
+test("missing units are never taken from ambiguous units, explicit unsupported labels, or contradictory bilingual names", () => {
+  const lines = parseTextLocally(
+    "Timun 2\n白玉菇 5lb\n白玉菇1.\n白玉菇\n日本黄瓜 Cucumber 2kg",
+    [...catalog, ...shopCatalog],
+  );
+  assert.equal(lines[0].quantity, "2");
+  assert.equal(lines[0].unit, "");
+  assert.equal(lines[1].unit, "");
+  assert.equal(lines[2].quantity, "");
+  assert.equal(lines[3].quantity, "");
+  assert.equal(lines[4].productId, "");
+  assert.equal(lines[4].matchedBy, "ambiguous");
+});
+test("an asserted blank quantity never hides conflicting numeric or unreadable evidence", () => {
+  const lines = buildReview(
+    result([
+      {
+        sourceText: "包菜 Cabbage 2",
+        productText: "包菜 Cabbage",
+        quantityStatus: "blank",
+      },
+      {
+        sourceText: "芥兰 Kale",
+        productText: "芥兰 Kale",
+        quantityStatus: "blank",
+        uncertain: true,
+      },
+      {
+        sourceText: "芥兰 Kale 8pkt",
+        productText: "芥兰 Kale",
+        quantityText: "8pkt",
+        quantityStatus: "unreadable",
+        uncertain: false,
+      },
+    ]),
+    null,
+    shopCatalog,
+  );
+  assert(lines.every((l) => l.disposition === "item"));
+  assert(lines[2].extractionIssues.length > 0);
+});
+test("long unmatched source lines remain recoverable and weight conversion never rounds unsupported precision", () => {
+  const source = "聊天备注".repeat(40);
+  const lines = parseTextLocally(`${source}\n黄瓜 0.5g`, shopCatalog);
+  assert.equal(lines[0].sourceText, source);
+  assert.equal(lines[0].productText, "");
+  assert.equal(lines[1].quantity, "0.5");
+  assert.equal(lines[1].unit, "g");
+  assert(lines[1].extractionIssues.length > 0);
+  assert(lineProblems(lines[1], shopCatalog).length > 0);
+});

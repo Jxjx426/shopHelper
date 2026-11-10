@@ -1,6 +1,14 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Layers, Store, Flame, Check, RefreshCw, PackageX } from "lucide-react";
+import {
+  Layers,
+  Store,
+  Flame,
+  Check,
+  RefreshCw,
+  PackageX,
+  ChevronDown,
+} from "lucide-react";
 import {
   pickedResolved,
   totalDemand,
@@ -12,6 +20,16 @@ import type { ViewProps } from "./types";
 type Task = { item: OrderItem; order: Order };
 export default function Picking({ data, mutate, busy, error }: ViewProps) {
   const [view, setView] = useState<"zone" | "restaurant">("zone");
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const isOpen = (id: string) => expanded.includes(`${data.date}:${id}`);
+  function toggle(id: string) {
+    const key = `${data.date}:${id}`;
+    setExpanded((current) =>
+      current.includes(key)
+        ? current.filter((v) => v !== key)
+        : [...current, key],
+    );
+  }
   const [incomplete, setIncomplete] = useState(false);
   const [visibleIds, setVisibleIds] = useState<string[]>([]);
   const [unavailable, setUnavailable] = useState<Task | null>(null);
@@ -35,6 +53,9 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
     return (
       <div
         key={item.id}
+        title={
+          item.last_changed_by ? `最后修改：${item.last_changed_by}` : undefined
+        }
         className={`pick-row ${item.picking_state === "picked" ? "done" : ""} ${item.unavailable ? "unavailable" : ""}`}
       >
         <label className="pick-label">
@@ -61,9 +82,6 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
             <strong>
               {view === "zone" ? order.restaurant_name : item.product_name}
             </strong>
-            {item.last_changed_by && (
-              <span className="pick-subtext">{item.last_changed_by}</span>
-            )}
             {(item.unavailable || order.urgent) && (
               <span className="pick-subtext">
                 {item.unavailable && "缺货"}
@@ -83,6 +101,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
           </strong>
           <button
             className="text-button"
+            aria-label={`${item.unavailable ? "取消缺货" : "标记缺货"}：${order.restaurant_name} ${item.product_name}`}
             disabled={busy || !!order.finalized_document_id}
             onClick={() =>
               item.unavailable
@@ -99,7 +118,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
                 : setUnavailable(task)
             }
           >
-            {item.unavailable ? "取消缺货" : "标记缺货"}
+            {item.unavailable ? "取消缺货" : "缺货"}
           </button>
         </div>
       </div>
@@ -196,39 +215,51 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
             });
             return (
               <section key={zone.id} className="zone-section">
-                <div className="zone-heading">
+                <button
+                  type="button"
+                  className="zone-heading picking-group-toggle"
+                  aria-expanded={isOpen(`zone-${zone.id}`)}
+                  aria-controls={`zone-items-${zone.id}`}
+                  onClick={() => toggle(`zone-${zone.id}`)}
+                >
                   <div className="zone-name">
                     <span className="zone-icon">
                       <Layers size={21} />
                     </span>
-                    <h2>{zone.name}</h2>
+                    <span className="group-name">{zone.name}</span>
                   </div>
                   <span className="tag">
-                    已处理{" "}
                     {zoneAll.filter((t) => pickedResolved(t.item)).length} /{" "}
                     {zoneAll.length}
                   </span>
-                </div>
-                {products.map((productId) => {
-                  const all = zoneAll.filter(
-                      (t) => t.item.product_id === productId,
-                    ),
-                    subset = zoneVisible.filter(
-                      (t) => t.item.product_id === productId,
-                    );
-                  return (
-                    <article key={productId} className="pick-product">
-                      <div className="product-group-header">
-                        <h3>{all[0].item.product_name}</h3>
-                        <span>
-                          订购合计{" "}
-                          <strong>{totalDemand(all.map((t) => t.item))}</strong>
-                        </span>
-                      </div>
-                      {subset.map(taskRow)}
-                    </article>
-                  );
-                })}
+                  <ChevronDown size={20} className="group-chevron" />
+                </button>
+                {isOpen(`zone-${zone.id}`) && (
+                  <div id={`zone-items-${zone.id}`}>
+                    {products.map((productId) => {
+                      const all = zoneAll.filter(
+                          (t) => t.item.product_id === productId,
+                        ),
+                        subset = zoneVisible.filter(
+                          (t) => t.item.product_id === productId,
+                        );
+                      return (
+                        <article key={productId} className="pick-product">
+                          <div className="product-group-header">
+                            <h3>{all[0].item.product_name}</h3>
+                            <span>
+                              订购合计{" "}
+                              <strong>
+                                {totalDemand(all.map((t) => t.item))}
+                              </strong>
+                            </span>
+                          </div>
+                          {subset.map(taskRow)}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
             );
           })}
@@ -246,10 +277,18 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
               if (!selected.length) return null;
               return (
                 <section className="zone-section" key={order.id}>
-                  <div className="zone-heading">
+                  <button
+                    type="button"
+                    className="zone-heading picking-group-toggle"
+                    aria-expanded={isOpen(`restaurant-${order.id}`)}
+                    aria-controls={`restaurant-items-${order.id}`}
+                    onClick={() => toggle(`restaurant-${order.id}`)}
+                  >
                     <div className="zone-name">
                       <Store size={24} />
-                      <h2>{order.restaurant_name}</h2>
+                      <span className="group-name">
+                        {order.restaurant_name}
+                      </span>
                       {order.urgent && (
                         <span className="tag amber">
                           <Flame size={16} />
@@ -258,31 +297,46 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
                       )}
                     </div>
                     <span className="tag">
-                      已处理 {order.items.filter(pickedResolved).length} /{" "}
+                      {order.items.filter(pickedResolved).length} /{" "}
                       {order.items.length}
                     </span>
-                  </div>
-                  {orderedZones.map((zone) => {
-                    const subset = selected.filter(
-                      (t) => t.item.zone_id === zone.id,
-                    );
-                    if (!subset.length) return null;
-                    return (
-                      <article className="pick-product" key={zone.id}>
-                        <div className="product-group-header">
-                          <h3>{zone.name}</h3>
-                          <span>{subset.length} 项商品</span>
-                        </div>
-                        {subset.map(taskRow)}
-                      </article>
-                    );
-                  })}
+                    <ChevronDown size={20} className="group-chevron" />
+                  </button>
+                  {isOpen(`restaurant-${order.id}`) && (
+                    <div
+                      className="pick-product restaurant-checklist"
+                      id={`restaurant-items-${order.id}`}
+                    >
+                      {[...selected]
+                        .sort((a, b) => {
+                          const zoneIndex = (id: string) => {
+                            const i = orderedZones.findIndex(
+                              (z) => z.id === id,
+                            );
+                            return i < 0 ? orderedZones.length : i;
+                          };
+                          return (
+                            zoneIndex(a.item.zone_id) -
+                              zoneIndex(b.item.zone_id) ||
+                            (data.products.find(
+                              (p) => p.id === a.item.product_id,
+                            )?.sort_order ?? 0) -
+                              (data.products.find(
+                                (p) => p.id === b.item.product_id,
+                              )?.sort_order ?? 0) ||
+                            a.item.position - b.item.position
+                          );
+                        })
+                        .map(taskRow)}
+                    </div>
+                  )}
                 </section>
               );
             })}
         </div>
       )}
-      <div className="stage-note">
+      <details className="stage-note picking-help">
+        <summary>配货说明</summary>
         首次勾选或标记缺货后，该餐馆的订购项目会锁定。撤销勾选不会解除锁定。
         {incomplete && (
           <>
@@ -290,7 +344,7 @@ export default function Picking({ data, mutate, busy, error }: ViewProps) {
             完成的项目暂时保留原位，点击「更新列表」后才隐藏。
           </>
         )}
-      </div>
+      </details>
       {unavailable && (
         <Modal
           title="确认这项商品缺货？"

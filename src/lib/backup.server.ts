@@ -61,6 +61,7 @@ const reviewLine = z
     productId: z.string().max(100),
     quantity: z.string().max(30),
     unit: z.enum([...UNITS, ""]),
+    unitNote: z.string().max(100).optional(),
     matchedBy: z.enum([
       "name",
       "alias",
@@ -191,6 +192,15 @@ function payload(input: unknown): Backup {
           `${t} 别名`,
         );
     }
+  for (const row of data.tables.products)
+    check(
+      row.english_name === undefined ||
+        row.english_name === null ||
+        (typeof row.english_name === "string" &&
+          row.english_name.length <= 80 &&
+          !/[\r\n\t\x00-\x1f]/.test(row.english_name)),
+      "商品英文名",
+    );
   for (const row of data.tables.product_units)
     check(
       UNITS.includes(row.order_unit as never) &&

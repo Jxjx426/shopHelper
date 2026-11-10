@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { isWeight, quantity, type Product, type Unit } from "./domain";
+import {
+  convertWeight,
+  isWeight,
+  quantity,
+  type Product,
+  type Unit,
+} from "./domain";
 import { normalizeName, type ReviewLine } from "./import-types";
 
 export const extractionSchema = z
@@ -16,6 +22,10 @@ export const extractionSchema = z
             quantity: z.string().max(30).nullable(),
             unitText: z.string().max(30).nullable(),
             uncertain: z.boolean(),
+            quantityText: z.string().max(100).nullable().optional(),
+            quantityStatus: z
+              .enum(["present", "blank", "unreadable"])
+              .optional(),
           })
           .strict(),
       )
@@ -39,6 +49,11 @@ export const EXTRACTION_JSON_SCHEMA = {
           quantity: { type: ["string", "null"] },
           unitText: { type: ["string", "null"] },
           uncertain: { type: "boolean" },
+          quantityText: { type: ["string", "null"] },
+          quantityStatus: {
+            type: "string",
+            enum: ["present", "blank", "unreadable"],
+          },
         },
         required: [
           "sourceLine",
@@ -47,6 +62,8 @@ export const EXTRACTION_JSON_SCHEMA = {
           "quantity",
           "unitText",
           "uncertain",
+          "quantityText",
+          "quantityStatus",
         ],
         additionalProperties: false,
       },
@@ -70,6 +87,9 @@ const equivalents: Record<string, Unit> = {
   pack: "包",
   packs: "包",
   pkt: "包",
+  pkts: "包",
+  packet: "包",
+  packets: "包",
   箱: "箱",
   box: "箱",
   boxes: "箱",
@@ -92,7 +112,7 @@ export function sourceLines(text: string) {
     .filter((l) => l.text.length > 0);
 }
 
-/** Only parse a single literal product, numeric quantity and explicit unit. */
+/** Parse one literal requirement; missing units may use a unique saved unit. */
 export function parseTextLocally(
   text: string,
   products: Product[],
@@ -101,7 +121,7 @@ export function parseTextLocally(
     .sort((a, b) => b.length - a.length)
     .join("|");
   const pattern = new RegExp(
-    `^(.+?)\\s*(?:[x×:：]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(${units})$`,
+    `^([^\\d]+?)\\s*(?:[x×:：]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(${units})?$`,
     "iu",
   );
   return buildReview(
@@ -110,10 +130,11 @@ export function parseTextLocally(
       unreadableContent: false,
       lines: sourceLines(text).map(({ text: source, line }) => {
         const match = source.match(pattern);
+        const label = match?.[1].trim() ?? source;
         return {
           sourceLine: line,
           sourceText: source,
-          productText: match?.[1].trim() ?? null,
+          productText: label.length <= 100 ? label : null,
           quantity: match?.[2] ?? null,
           unitText: match?.[3] ?? null,
           uncertain: false,
@@ -142,6 +163,27 @@ export function matchProduct(
     return { id: aliases[0].id, by: "alias", candidates: [aliases[0].id] };
   if (aliases.length > 1)
     return { id: "", by: "ambiguous", candidates: aliases.map((p) => p.id) };
+  // A bilingual label is one product, not a substring match (黄瓜 ≠ 日本黄瓜).
+  if (/\p{Script=Han}/u.test(normalized) && /[a-z]/i.test(normalized)) {
+    const fragments = [
+      normalized.replace(/[a-z][a-z\s'-]*/gi, " ").trim(),
+      normalized
+        .replace(/[^a-z\s'-]/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    ];
+    const matches = active.filter((p) =>
+      fragments.some(
+        (part) =>
+          part &&
+          [p.name, ...p.aliases].some((name) => normalizeName(name) === part),
+      ),
+    );
+    if (matches.length === 1)
+      return { id: matches[0].id, by: "alias", candidates: [matches[0].id] };
+    if (matches.length > 1)
+      return { id: "", by: "ambiguous", candidates: matches.map((p) => p.id) };
+  }
   // Suggestions never choose a product, including similar Timun varieties.
   const suggestions = active
     .filter((p) =>
@@ -220,12 +262,34 @@ export function buildReview(
     }
   } else
     result.lines.forEach((raw) =>
-      proposals.push({ raw, source: raw.sourceText, line: raw.sourceLine }),
+      proposals.push({
+        raw,
+        source:
+          raw.quantityText && !raw.sourceText.includes(raw.quantityText)
+            ? `${raw.sourceText} ${raw.quantityText}`
+            : raw.sourceText,
+        line: raw.sourceLine,
+      }),
     );
   return proposals.map(({ raw, source, line }, index) => {
     const entry = blankLine(source, line, `line-${index + 1}`);
     if (!raw) {
       entry.extractionIssues.push("此原文行未被模型识别，请手动处理或明确忽略");
+      return entry;
+    }
+    if (
+      text === null &&
+      raw.quantityStatus === "blank" &&
+      !raw.uncertain &&
+      !raw.quantity &&
+      !raw.unitText &&
+      !raw.quantityText?.trim() &&
+      !/\d/.test(source) &&
+      !/[?？]|unreadable|看不清|无法辨认|模糊/i.test(source)
+    ) {
+      entry.productText = raw.productText ?? "";
+      entry.disposition = "ignored";
+      entry.ignoreReason = "数量栏空白，本次未订购";
       return entry;
     }
     const evidence = normalizeName(source);
@@ -242,9 +306,16 @@ export function buildReview(
     entry.candidates = match.candidates;
     if (productText && !groundedProduct)
       issues.push("商品文字无法在原文中核实，请手动选择");
-    if (raw.quantity) {
+    // Prefer the literal quantity cell, never a model-converted quantity/unit.
+    const cell =
+      text === null && raw.quantityText?.trim()
+        ? raw.quantityText.trim().match(/^(\d+(?:\.\d+)?)\s*([^\d\s]+)?$/u)
+        : null;
+    const rawQuantity = cell?.[1] ?? raw.quantity;
+    const rawUnit = cell ? (cell[2] ?? null) : raw.unitText;
+    if (rawQuantity) {
       try {
-        const q = quantity(raw.quantity);
+        const q = quantity(rawQuantity);
         if (!literalQuantity(q, source) || /\d+\.(?!\d)|\d+,\d/.test(source))
           issues.push("数量不完整或无法核实，请手动填写");
         else entry.quantity = q;
@@ -252,9 +323,9 @@ export function buildReview(
         issues.push("数量无效，请手动填写");
       }
     }
-    const normalized = normalizeUnit(raw.unitText);
-    const unitLiteral = raw.unitText
-      ? normalizeName(raw.unitText).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const normalized = normalizeUnit(rawUnit);
+    const unitLiteral = rawUnit
+      ? normalizeName(rawUnit).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       : "";
     const unitEvidence =
       unitLiteral &&
@@ -263,12 +334,45 @@ export function buildReview(
         "iu",
       ).test(evidence);
     if (normalized && unitEvidence) entry.unit = normalized;
-    else if (raw.unitText) issues.push("单位无法核实或无法换算，请手动选择");
+    else if (rawUnit) issues.push("单位无法核实或无法换算，请手动选择");
+    const product = products.find((p) => p.id === entry.productId);
+    const units = [...new Set(product?.units.map((u) => u.orderUnit) ?? [])];
+    if (
+      !entry.unit &&
+      !rawUnit &&
+      entry.quantity &&
+      units.length === 1 &&
+      new RegExp(`\\d(?:\\.\\d+)?\\s*$`).test(source)
+    ) {
+      entry.unit = units[0];
+      entry.unitNote = "沿用商品已设单位";
+    }
+    if (
+      entry.quantity &&
+      isWeight(entry.unit) &&
+      !units.includes(entry.unit as Unit)
+    ) {
+      const weights = units.filter(isWeight);
+      if (weights.length === 1) {
+        const original = `${entry.quantity} ${entry.unit}`;
+        try {
+          const converted = quantity(
+            convertWeight(entry.quantity, entry.unit, weights[0]),
+          );
+          entry.quantity = converted;
+          entry.unit = weights[0];
+          entry.unitNote = `原单 ${original}`;
+        } catch {
+          issues.push("重量换算超出数量范围，请手动核对");
+        }
+      }
+    }
     if (entry.unit && !isWeight(entry.unit) && entry.quantity.includes(".")) {
       entry.quantity = "";
       issues.push("按件商品的数量需要人工确认");
     }
-    if (raw.uncertain) issues.push("模型标记内容不确定，请对照原文核对");
+    if (raw.uncertain || raw.quantityStatus === "unreadable")
+      issues.push("模型标记内容不确定，请对照原文核对");
     entry.extractionIssues = issues;
     return entry;
   });

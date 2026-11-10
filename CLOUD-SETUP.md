@@ -153,3 +153,17 @@ Netlify Free 的函数区域不能免费自选；参考 [函数区域限制](htt
 2026-11-09 已完成真实 Supabase 数据库的证书校验和只读连接；未修改云数据库，未宣称签名上传、托管 Realtime 或 Netlify 后台执行已通过线上验收。公开证书位于 assets/supabase-ca.crt；本机服务器设置 SHOP_DB_CA_FILE 指向该文件，后续 Netlify 也需同样设置。
 
 2026-11-09 上线准备更新：店主确认 Netlify 和 Supabase 均为 Free；已提供 Netlify 私有测试网址并手动导入生产变量。专用导入文件 .env.netlify.local 已受 Git 忽略，不可提交。云端私有表、bucket、TLS、权限隔离与 Realtime JWT 检查通过；原店完整 JSON 和冷数据库副本已保存在 data/backups/pre-cloud-2026-11-09-*，原库保留。公开 CA 证书和部署说明已在本机准备，构建通过。营业迁移、GitHub 推送及 Netlify 更新部署仍等待店主确认；不点击 Make public。
+
+## PDF 汇总与英文商品名更新（部署前，当前未执行）
+
+历史订单合并默认增加第一页汇总，可改为最后一页或不加；汇总按保存的最终金额相加，不重新舍入或读取现价。单张及合并 PDF 可选中文 / English。英文商品名由店主在商品设置填写，不调用 AI；缺少名称会提示补填。新定稿快照保存当时的英文名，原始存档 PDF 不改写。早期快照用商品 ID 或唯一名称 / 别名寻找已填英文名，不能唯一对应时不自动猜译。
+
+本次新增一个可空字段 `shop_private.products.english_name`。新安装由初始化工具建立；已有云店铺发布前需做一次可重复的追加更新：
+
+```powershell
+npm run cloud:upgrade
+# 上面只说明更新内容，不连接数据库。店主测试并确认后，才执行：
+node --env-file=.env.netlify.local --import tsx scripts/cloud-upgrade.ts --apply
+```
+
+工具沿用受忽略的服务端连接配置、TLS 校验及免费套餐确认。仅添加字段，不替换资料、不创建账号或付费服务、不部署。请先保留一份营业备份，再在空测试项目验证；当前开发测试没有对营业云数据库运行 `--apply`。旧客户端省略英文名时保留已有英文名，旧中文数据不需要重新导入。
