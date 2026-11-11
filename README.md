@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="docs/brand/shophelper-icon.png" width="112" height="112" alt="鲜配助手图标：绿叶、订单与确认勾号">
+</p>
+
 # ShopHelper · 鲜配助手
+
+**简体中文** | [English](README.en.md)
 
 给小型鲜货店使用的手机订单、配货、称重与出单应用。
 
@@ -7,6 +13,14 @@ A mobile web app for restaurant orders, produce picking, weighing, and delivery 
 把餐馆发来的文字或截图整理成订单，按区域或餐馆配货，再按实际供货数量计算金额、生成中英文 PDF。面向中文使用者，保留大按钮、简洁清单和可调字号，支持四人使用独立账号共同工作。
 
 **文字 / 截图 → 人工审核 → 配货 → 实供确认 → Order List**
+
+## 为什么做这个项目
+
+我父母是自己开着一间小店卖菜卖鱼养大我们几个孩子的。从小到大都知道父母做工养家，每天早出晚归很辛苦。但是对于实际有多辛苦我还是不清楚。直到前几个星期，爸爸提起有一天员工请假，人手不够，我刚好学校放假，就提出可以去帮忙一天。也就是那一天，让我有了做这个项目的想法。
+
+那天，我体验到了从餐馆订单到配货、称重，再到手写账单，有不少需要反复抄写、核对和计算的步骤。配货列表是爸爸自己用手机输入成一个信息，再发送给我的whatsapp，没有顺序，对于店内货品摆放位置不熟悉的我，需要一个一个从店头找到店尾才知道在哪里。手写账单也是有算错帐的风险。
+
+所以我希望把这些事情整理进一个简单的手机应用，让父母少抄一些单、少算一些账，也更方便一起核对订单。 比起功能有多少，我更在意他们拿起手机能不能用得明白，忙的时候能不能省一点时间、轻松一点。
 
 ## 界面预览
 
@@ -182,15 +196,3 @@ npm run test:cloud
 ```
 
 云端专项检查默认不包含在 `npm test` 内。不要把测试脚本指向营业数据库。四会话验收细节见 [STAGE4-TESTING.md](STAGE4-TESTING.md)。
-
-### 只更新文档时，跳过 Netlify 部署
-
-如果这次只改 README 和截图，提交说明加上 `[skip netlify]`：
-
-```powershell
-git add README.md docs/screenshots
-git commit -m "docs: refresh README and screenshots [skip netlify]"
-git push origin main
-```
-
-标记写在 **commit message**，不是写进 README 内容。它只用于这次纯文档提交；需要发布应用更新时不要加。参见 [Netlify 跳过部署说明](https://docs.netlify.com/deploy/manage-deploys/manage-deploys-overview/#skip-a-deploy)。

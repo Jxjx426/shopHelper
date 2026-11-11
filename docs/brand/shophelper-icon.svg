@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">ShopHelper · 鲜配助手</title>
+  <desc id="desc">深绿色圆角底上的奶白订单、两片绿叶与橙色确认勾号。</desc>
+  <rect width="256" height="256" rx="58" fill="#225747"/>
+  <rect x="60" y="53" width="136" height="166" rx="22" fill="#173F34" fill-opacity=".32"/>
+  <rect x="60" y="45" width="136" height="166" rx="22" fill="#FAF8EF"/>
+  <path d="M87 111H169" stroke="#225747" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="88" cy="139" r="4" fill="#729478"/>
+  <path d="M105 139H156" stroke="#729478" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="88" cy="166" r="4" fill="#729478"/>
+  <path d="M105 166H138" stroke="#729478" stroke-width="8" stroke-linecap="round"/>
+  <path d="M127 92V71" stroke="#225747" stroke-width="7" stroke-linecap="round"/>
+  <path d="M126 78C106 79 92 66 93 48C113 45 129 56 126 78Z" fill="#729478"/>
+  <path d="M127 70C123 49 136 31 159 29C163 52 150 69 127 70Z" fill="#225747"/>
+  <path d="M130 65L145 45" stroke="#FAF8EF" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="184" cy="185" r="35" fill="#FAF8EF"/>
+  <circle cx="184" cy="185" r="29" fill="#E4A36A"/>
+  <path d="M171 185L180 194L198 175" stroke="#173F34" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
