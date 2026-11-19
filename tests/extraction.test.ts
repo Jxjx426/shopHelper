@@ -345,7 +345,7 @@ const single = (
   id: string,
   name: string,
   aliases: string[],
-  unit: "kg" | "包" | "粒",
+  unit: "kg" | "包" | "粒" | "箱",
 ) => ({
   ...product(id, name, aliases),
   units: [{ orderUnit: unit, billingUnit: unit, price: "1.00" }],
@@ -498,4 +498,255 @@ test("long unmatched source lines remain recoverable and weight conversion never
   assert.equal(lines[1].unit, "g");
   assert(lines[1].extractionIssues.length > 0);
   assert(lineProblems(lines[1], shopCatalog).length > 0);
+});
+
+test("the numbered DOE template fills ordered rows and folds every explicit empty quantity", () => {
+  const doeCatalog = [
+    single("coral", "泰国生菜", ["GREEN CORAL"], "kg"),
+    single("egg", "鸡蛋 B", [], "箱"),
+    single("broccoli", "花椰菜", [], "粒"),
+    product("cucumber", "日本黄瓜"),
+  ];
+  const text = `DOE Order :
+1) GREEN CORAL - 1kg
+2）葱 -
+3）鱼饼-
+4）鸡蛋 B - 2排
+5）酸酐 -
+6）桔仔-
+7）蒜-
+8）中国西芹 -
+9）包菜 -
+10）紫包菜 -
+11）包菜花-
+12）生菜 -
+13）胡萝卜-
+14）黄瓜-
+15）大番茄 -
+16）小番茄 -
+17）花椰菜 - 2pcs
+18）日本黄瓜 - 2pcs
+20）金针菇 -
+21）白玉菇 -
+22）黑玉菇 -
+23）花菇-
+24）米粉（长）-
+25）荷兰葱-
+26）马铃薯 -
+27）小葱仔-
+28) 炸葱 -
+29)青盐 -
+30）老姜 -
+31）香茅 -
+32）香菇 -
+33) 蚝油-
+34）生抽-
+35)黑酱油 -
+36）kimball chili sauce -
+37）kimball tomato sauce -
+38)糙米 -
+39)白糖 -
+40）麻油 -
+41）味精 -
+42）胡椒粉 -
+43)面包粉-
+44) 炸鸡粉-`;
+  const lines = parseTextLocally(text, doeCatalog);
+  const ordered = lines.filter((line) => line.disposition === "item");
+  assert.equal(lines.length, 44);
+  assert.deepEqual(
+    lines.map((line) => line.sourceText),
+    text.split("\n"),
+  );
+  assert.equal(
+    lines.filter((line) => line.disposition === "ignored").length,
+    40,
+  );
+  assert.deepEqual(
+    ordered.map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      ["coral", "1", "kg"],
+      ["egg", "2", "箱"],
+      ["broccoli", "2", "粒"],
+      ["cucumber", "2", "粒"],
+    ],
+  );
+  assert.equal(ordered[1].extractionIssues.length, 0);
+  assert.match(ordered[1].unitNote!, /排.*箱/);
+  assert(lines.every((line) => !line.reviewed));
+  assert(
+    lines
+      .filter((line) => line.disposition === "ignored")
+      .every(
+        (line) => !line.quantity && !lineProblems(line, doeCatalog).length,
+      ),
+  );
+});
+
+test("list labels and separators normalize without treating product codes or damaged quantities as orders", () => {
+  const fixtures = [
+    single("coral", "泰国生菜", ["Green Coral"], "kg"),
+    single("code", "B2", [], "包"),
+  ];
+  const lines = parseTextLocally(
+    "１）GREEN CORAL－１kg\n(2) Green Coral : 2kg\n3. Green Coral — 3kg\n4、 B2 - 5pkt\n5) B2\n6) B2 -\n7) Green Coral - ?\n8) Green Coral - 0kg\n9) Green Coral 2. -\n10) 未存商品 -",
+    fixtures,
+  );
+  assert.deepEqual(
+    lines.slice(0, 4).map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      ["coral", "1", "kg"],
+      ["coral", "2", "kg"],
+      ["coral", "3", "kg"],
+      ["code", "5", "包"],
+    ],
+  );
+  assert.equal(lines[4].quantity, "");
+  assert.equal(lines[4].disposition, "item");
+  assert.equal(lines[5].disposition, "ignored");
+  assert(
+    lines
+      .slice(6, 9)
+      .every((line) => line.disposition === "item" && !line.quantity),
+  );
+  assert.equal(lines[9].disposition, "ignored");
+});
+
+test("AI proposals cannot turn list numbers or digits inside product names into requested quantities", () => {
+  const fixtures = [
+    single("tofu", "豆腐", [], "粒"),
+    single("code", "B2", [], "包"),
+  ];
+  const lines = buildReview(
+    result([
+      {
+        sourceText: "2）豆腐 -",
+        productText: "豆腐",
+        quantity: "2",
+        unitText: "粒",
+      },
+      { sourceText: "3）豆腐", productText: "豆腐", quantity: "3" },
+      { sourceText: "4）B2", productText: "B2", quantity: "2" },
+    ]),
+    "2）豆腐 -\n3）豆腐\n4）B2",
+    fixtures,
+  );
+  assert.equal(lines[0].disposition, "ignored");
+  assert(lines.every((line) => !line.quantity));
+  const image = buildReview(
+    result([
+      {
+        sourceText: "17) 玻璃生菜 Ice Berg Lettuce",
+        productText: "玻璃生菜 Ice Berg Lettuce",
+        quantityStatus: "blank",
+      },
+      {
+        sourceText: "18) 豆腐 2",
+        productText: "豆腐",
+        quantityStatus: "blank",
+      },
+    ]),
+    null,
+    fixtures,
+  );
+  assert.equal(image[0].disposition, "ignored");
+  assert.equal(image[1].disposition, "item");
+});
+
+test("an English name followed by a Chinese unit is a requirement, not a complete bilingual product label", () => {
+  const fixtures = [single("carrot", "Carrot", [], "箱")];
+  const lines = parseTextLocally(
+    "Carrot 1箱\n2）Carrot - 3箱\n3) Carrot 2箱 -",
+    fixtures,
+  );
+  assert.deepEqual(
+    lines.slice(0, 2).map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      ["carrot", "1", "箱"],
+      ["carrot", "3", "箱"],
+    ],
+  );
+  assert.equal(lines[2].disposition, "item");
+});
+
+test("the shop's egg tray and carton names use boxes without changing quantities or affecting other products", () => {
+  const egg = single("egg", "鸡蛋 B", ["Egg B"], "箱");
+  const fixtures = [
+    egg,
+    single("egg-a", "Egg A", [], "箱"),
+    single("tofu", "鸡蛋豆腐", ["Egg tofu"], "箱"),
+    single("mushroom", "白玉菇", [], "包"),
+    single("loose", "鸡蛋", [], "粒"),
+  ];
+  const source =
+    "1）鸡蛋 B - 2排\n2) Egg B 3盒\nEgg A 1排\n鸡蛋豆腐 2盒\n白玉菇 3盒\n鸡蛋 2排\n未知商品 2排\n鸡蛋 B 1.5排";
+  const lines = parseTextLocally(source, fixtures);
+  assert.deepEqual(
+    lines.slice(0, 3).map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      ["egg", "2", "箱"],
+      ["egg", "3", "箱"],
+      ["egg-a", "1", "箱"],
+    ],
+  );
+  assert(
+    lines
+      .slice(0, 3)
+      .every(
+        (line) =>
+          !lineProblems(line, fixtures).length &&
+          !line.extractionIssues.length &&
+          !line.reviewed,
+      ),
+  );
+  assert(
+    lines
+      .slice(3, 7)
+      .every((line) => !line.unit && line.extractionIssues.length),
+  );
+  assert.equal(lines[7].quantity, "");
+  assert.equal(lines[0].sourceText, source.split("\n")[0]);
+  assert.match(lines[1].unitNote!, /盒.*箱/);
+  assert.equal(normalizeUnit("排"), "");
+  assert.equal(normalizeUnit("盒"), "");
+  const image = buildReview(
+    result([
+      {
+        sourceText: "鸡蛋 B",
+        productText: "鸡蛋 B",
+        quantityText: "2排",
+        quantityStatus: "present",
+      },
+      {
+        sourceText: "Egg B",
+        productText: "Egg B",
+        quantityText: "3盒",
+        quantityStatus: "present",
+      },
+    ]),
+    null,
+    fixtures,
+  );
+  assert.deepEqual(
+    image.map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      ["egg", "2", "箱"],
+      ["egg", "3", "箱"],
+    ],
+  );
+  assert(image.every((line) => !line.extractionIssues.length));
+  const invented = buildReview(
+    result([
+      {
+        sourceText: "鸡蛋 B 2",
+        productText: "鸡蛋 B",
+        quantity: "2",
+        unitText: "排",
+      },
+    ]),
+    null,
+    fixtures,
+  );
+  assert.equal(invented[0].unit, "");
+  assert(invented[0].extractionIssues.length);
 });

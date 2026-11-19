@@ -102,8 +102,25 @@ const equivalents: Record<string, Unit> = {
   条: "条",
   支: "支",
 };
-export const normalizeUnit = (value: string | null): Unit | "" =>
-  value ? (equivalents[normalizeName(value)] ?? "") : "";
+export const normalizeUnit = (
+  value: string | null,
+  product?: Product,
+): Unit | "" => {
+  if (!value) return "";
+  const label = normalizeName(value);
+  // The shop uses 排 / 盒 interchangeably with 箱 for eggs, with no quantity conversion.
+  if (
+    (label === "排" || label === "盒") &&
+    product?.units.some((unit) => unit.orderUnit === "箱") &&
+    [product.name, ...product.aliases].some((name) =>
+      /^(?:鸡蛋(?:\s*[a-z])?|(?:chicken\s+)?eggs?(?:\s*[a-z])?)$/iu.test(
+        normalizeName(name),
+      ),
+    )
+  )
+    return "箱";
+  return equivalents[label] ?? "";
+};
 export function sourceLines(text: string) {
   return text
     .replace(/\r\n?/g, "\n")
@@ -112,16 +129,44 @@ export function sourceLines(text: string) {
     .filter((l) => l.text.length > 0);
 }
 
+/** List numbers are labels, never evidence of a requested quantity. */
+function requirementText(source: string) {
+  return source
+    .normalize("NFKC")
+    .trim()
+    .replace(/^(?:\(?\d{1,3}\s*[)、]|\d{1,3}\.(?!\d))\s*/u, "")
+    .replace(/^[•*+-]\s+/u, "");
+}
+
+function exactProductLabel(label: string, products: Product[]) {
+  const term = normalizeName(label);
+  return products.some(
+    (product) =>
+      product.active &&
+      [product.name, ...product.aliases].some(
+        (name) => normalizeName(name) === term,
+      ),
+  );
+}
+
+function blankRequirement(source: string, products: Product[]) {
+  const content = requirementText(source);
+  const match = content.match(/^(.+?)\s*[-–—:：]\s*$/u);
+  if (!match || /[?？]|unreadable|看不清|无法辨认|模糊/i.test(content))
+    return null;
+  const label = match[1].trim();
+  // An incomplete number such as "青葱 2. -" must stay in review.
+  if (/\d/.test(label) && !exactProductLabel(label, products)) return null;
+  return label;
+}
+
 /** Parse one literal requirement; missing units may use a unique saved unit. */
 export function parseTextLocally(
   text: string,
   products: Product[],
 ): ReviewLine[] {
-  const units = Object.keys(equivalents)
-    .sort((a, b) => b.length - a.length)
-    .join("|");
   const pattern = new RegExp(
-    `^([^\\d]+?)\\s*(?:[x×:：]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(${units})?$`,
+    `^(.+?)\\s*(?:[-–—x×:：]\\s*)?(\\d+(?:\\.\\d+)?)\\s*([\\p{L}]+)?$`,
     "iu",
   );
   return buildReview(
@@ -129,8 +174,13 @@ export function parseTextLocally(
       detectedRestaurant: null,
       unreadableContent: false,
       lines: sourceLines(text).map(({ text: source, line }) => {
-        const match = source.match(pattern);
-        const label = match?.[1].trim() ?? source;
+        const content = requirementText(source);
+        const blank = blankRequirement(source, products);
+        const match =
+          blank || exactProductLabel(content, products)
+            ? null
+            : content.match(pattern);
+        const label = blank ?? match?.[1].trim() ?? content;
         return {
           sourceLine: line,
           sourceText: source,
@@ -273,6 +323,14 @@ export function buildReview(
     );
   return proposals.map(({ raw, source, line }, index) => {
     const entry = blankLine(source, line, `line-${index + 1}`);
+    const content = requirementText(source);
+    const blank = text !== null ? blankRequirement(source, products) : null;
+    if (blank !== null) {
+      entry.productText = blank.length <= 100 ? blank : "";
+      entry.disposition = "ignored";
+      entry.ignoreReason = "数量栏空白，本次未订购";
+      return entry;
+    }
     if (!raw) {
       entry.extractionIssues.push("此原文行未被模型识别，请手动处理或明确忽略");
       return entry;
@@ -284,7 +342,7 @@ export function buildReview(
       !raw.quantity &&
       !raw.unitText &&
       !raw.quantityText?.trim() &&
-      !/\d/.test(source) &&
+      !/\d/.test(content) &&
       !/[?？]|unreadable|看不清|无法辨认|模糊/i.test(source)
     ) {
       entry.productText = raw.productText ?? "";
@@ -300,6 +358,9 @@ export function buildReview(
       issues.push("模型原文与粘贴内容不一致，请逐项核对");
     const groundedProduct =
       productText && evidence.includes(normalizeName(productText));
+    const quantityEvidence = groundedProduct
+      ? normalizeName(content).replace(normalizeName(productText), "")
+      : content;
     const match = matchProduct(groundedProduct ? productText : "", products);
     entry.productId = match.id;
     entry.matchedBy = match.by;
@@ -316,14 +377,18 @@ export function buildReview(
     if (rawQuantity) {
       try {
         const q = quantity(rawQuantity);
-        if (!literalQuantity(q, source) || /\d+\.(?!\d)|\d+,\d/.test(source))
+        if (
+          !literalQuantity(q, quantityEvidence) ||
+          /\d+\.(?!\d)|\d+,\d/.test(quantityEvidence)
+        )
           issues.push("数量不完整或无法核实，请手动填写");
         else entry.quantity = q;
       } catch {
         issues.push("数量无效，请手动填写");
       }
     }
-    const normalized = normalizeUnit(rawUnit);
+    const product = products.find((p) => p.id === entry.productId);
+    const normalized = normalizeUnit(rawUnit, product);
     const unitLiteral = rawUnit
       ? normalizeName(rawUnit).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       : "";
@@ -332,17 +397,19 @@ export function buildReview(
       new RegExp(
         `(?:\\d\\s*${unitLiteral}(?![a-z])|(?<![a-z])${unitLiteral}\\s*\\d)`,
         "iu",
-      ).test(evidence);
-    if (normalized && unitEvidence) entry.unit = normalized;
-    else if (rawUnit) issues.push("单位无法核实或无法换算，请手动选择");
-    const product = products.find((p) => p.id === entry.productId);
+      ).test(quantityEvidence);
+    if (normalized && unitEvidence) {
+      entry.unit = normalized;
+      if (normalizeUnit(rawUnit) !== normalized)
+        entry.unitNote = `原单单位 ${rawUnit}，按箱处理`;
+    } else if (rawUnit) issues.push("单位无法核实或无法换算，请手动选择");
     const units = [...new Set(product?.units.map((u) => u.orderUnit) ?? [])];
     if (
       !entry.unit &&
       !rawUnit &&
       entry.quantity &&
       units.length === 1 &&
-      new RegExp(`\\d(?:\\.\\d+)?\\s*$`).test(source)
+      new RegExp(`\\d(?:\\.\\d+)?\\s*$`).test(quantityEvidence)
     ) {
       entry.unit = units[0];
       entry.unitNote = "沿用商品已设单位";

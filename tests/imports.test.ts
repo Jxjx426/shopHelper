@@ -16,6 +16,7 @@ import {
   listDrafts,
   supplementDraft,
   setDraftDeleted,
+  reparseTextDraft,
 } from "../src/lib/imports.server";
 import {
   PRIVACY_VERSION,
@@ -1115,4 +1116,202 @@ test("table extraction persists literal quantity cells and blank rows through re
   assert.equal(confirmed.preview.lines.length, 1);
   assert.equal(confirmed.preview.lines[0].quantity, "0.5");
   assert.equal((await getDraft(actor, d.id)).attempts, 1);
+});
+
+test("numbered pasted forms keep blank requirements out of confirmed orders and picking tasks", async () => {
+  const source =
+    "DOE Order :\n1) Timun - 2kg\n2）Carrot -\n3）未存商品-\n4）日本 Timun - 500g";
+  let d = await draft(source);
+  assert.equal(d.lines.length, 5);
+  assert.equal(d.lines.filter((line) => line.disposition === "item").length, 2);
+  assert.deepEqual(
+    d.lines
+      .filter((line) => line.disposition === "item")
+      .map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      [product, "2", "kg"],
+      [japanese, "0.5", "kg"],
+    ],
+  );
+  assert.equal(d.attempts, 0);
+  await assert.rejects(
+    previewImport(actor, d.id, d.version, "new"),
+    /确认|核对|处理/,
+  );
+  await saveDraft(actor, d.id, randomUUID(), {
+    version: d.version,
+    restaurantId: d.restaurant_id,
+    lines: serialize(d.lines.map((line) => ({ ...line, reviewed: true }))),
+    sourceChecked: true,
+    restaurantAcknowledged: false,
+  });
+  d = await getDraft(actor, d.id);
+  const confirmed = await confirm(d);
+  assert.equal(confirmed.preview.lines.length, 2);
+  const order = (await workspace(date)).orders.find(
+    (order) => order.id === confirmed.id,
+  )!;
+  assert.deepEqual(
+    order.items.map((item) => item.product_id).sort(),
+    [product, japanese].sort(),
+  );
+  assert.equal(order.items.length, 2);
+  assert.equal((await getDraft(actor, d.id)).original_text, source);
+  assert.equal((await getDraft(actor, d.id)).attempts, 0);
+  await assert.rejects(
+    reparseTextDraft(actor, d.id, randomUUID(), {
+      version: (await getDraft(actor, d.id)).version,
+    }),
+    /已确认/,
+  );
+});
+
+test("explicit rules-only reparsing repairs saved numbered fallbacks and preserves manual and reviewed rows", async () => {
+  let d = await draft(
+    "1) Timun - 2kg\n2）Carrot -\n3) Carrot - 4kg\n4) Timun -\n5) 未存商品 -",
+  );
+  const original = d.lines.map((line) => ({
+    ...blankLine(line.sourceText, line.sourceLine, line.id),
+    productText: line.sourceText,
+    matchedBy: "unknown" as const,
+  }));
+  const manual = {
+    ...original[2],
+    productId: box,
+    productText: "Carrot",
+    quantity: "7",
+    unit: "kg" as const,
+    matchedBy: "manual" as const,
+  };
+  const reviewed = {
+    ...original[3],
+    disposition: "ignored" as const,
+    ignoreReason: "我已核对不订购",
+    reviewed: true,
+  };
+  const manualBlank = { ...original[4], matchedBy: "manual" as const };
+  const saved = [original[0], original[1], manual, reviewed, manualBlank];
+  await (
+    await getDb()
+  ).query(
+    "UPDATE import_drafts SET lines=$1,status='review',source_checked=true,version=version+1 WHERE id=$2",
+    [JSON.stringify(saved), d.id],
+  );
+  d = await getDraft(actor, d.id);
+  const key = randomUUID();
+  await assert.rejects(
+    reparseTextDraft(stranger, d.id, randomUUID(), { version: d.version }),
+    /不存在/,
+  );
+  await assert.rejects(
+    reparseTextDraft(actor, d.id, randomUUID(), { version: d.version + 1 }),
+    /已更新/,
+  );
+  const first = await reparseTextDraft(actor, d.id, key, {
+    version: d.version,
+  });
+  assert.equal(first.changed, true);
+  assert.deepEqual(
+    await reparseTextDraft(actor, d.id, key, { version: d.version }),
+    first,
+  );
+  const fresh = await getDraft(actor, d.id);
+  assert.deepEqual(
+    fresh.lines.map((line) => line.id),
+    saved.map((line) => line.id),
+  );
+  assert.deepEqual(fresh.lines.slice(2), [manual, reviewed, manualBlank]);
+  assert.equal(fresh.lines[0].productId, product);
+  assert.equal(fresh.lines[0].quantity, "2");
+  assert.equal(fresh.lines[1].disposition, "ignored");
+  assert.equal(fresh.source_checked, false);
+  assert.equal(fresh.attempts, 0);
+  const again = await reparseTextDraft(actor, d.id, randomUUID(), {
+    version: fresh.version,
+  });
+  assert.equal(again.changed, false);
+  assert.equal(again.version, fresh.version);
+});
+
+test("unresolved extraction first repairs untouched numbered text without invoking an AI provider", async () => {
+  let d = await draft("1) Timun - 2kg\n2）Carrot -");
+  const legacy = d.lines.map((line) => ({
+    ...blankLine(line.sourceText, line.sourceLine, line.id),
+    productText: line.sourceText,
+    matchedBy: "unknown" as const,
+  }));
+  await (
+    await getDb()
+  ).query(
+    "UPDATE import_drafts SET lines=$1,status='review',version=version+1 WHERE id=$2",
+    [JSON.stringify(legacy), d.id],
+  );
+  d = await getDraft(actor, d.id);
+  let calls = 0;
+  await extractDraft(
+    actor,
+    d.id,
+    randomUUID(),
+    {
+      version: d.version,
+      privacyVersion: PRIVACY_VERSION,
+      redacted: true,
+      replaceExisting: false,
+      scope: "unresolved",
+    },
+    mock(raw(), () => calls++),
+  );
+  const fresh = await getDraft(actor, d.id);
+  assert.equal(calls, 0);
+  assert.equal(fresh.attempts, 0);
+  assert.equal(fresh.lines[0].productId, product);
+  assert.equal(fresh.lines[0].quantity, "2");
+  assert.equal(fresh.lines[1].disposition, "ignored");
+});
+
+test("egg trays and cartons reach confirmed picking rows as the same box unit with unchanged prices", async () => {
+  const egg = (
+    await action({
+      action: "saveProduct",
+      name: "鸡蛋 B",
+      aliases: ["Egg B"],
+      zoneId: zone,
+      sortOrder: 2,
+      active: true,
+      units: [{ orderUnit: "箱", billingUnit: "箱", price: "24.00" }],
+    })
+  ).id;
+  const source = "1）鸡蛋 B - 2排\n2）Egg B - 3盒\n3）Timun -";
+  let d = await draft(source);
+  assert.deepEqual(
+    d.lines
+      .slice(0, 2)
+      .map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      [egg, "2", "箱"],
+      [egg, "3", "箱"],
+    ],
+  );
+  assert.equal(d.lines[2].disposition, "ignored");
+  assert.equal(d.attempts, 0);
+  await saveDraft(actor, d.id, randomUUID(), {
+    version: d.version,
+    restaurantId: d.restaurant_id,
+    lines: serialize(d.lines.map((line) => ({ ...line, reviewed: true }))),
+    sourceChecked: true,
+    restaurantAcknowledged: false,
+  });
+  d = await getDraft(actor, d.id);
+  const confirmed = await confirm(d);
+  const order = (await workspace(date)).orders.find(
+    (order) => order.id === confirmed.id,
+  )!;
+  assert.equal(order.items.length, 1);
+  assert.equal(order.items[0].product_id, egg);
+  assert.equal(order.items[0].ordered_quantity, "5.000");
+  assert.equal(order.items[0].ordered_unit, "箱");
+  assert.equal(order.items[0].billing_unit, "箱");
+  assert.equal(order.items[0].price_snapshot, "24.00");
+  assert.equal((await getDraft(actor, d.id)).original_text, source);
+  assert.equal((await getDraft(actor, d.id)).attempts, 0);
 });

@@ -566,6 +566,105 @@ async function markRestaurantHeader(
     }
   }
 }
+
+async function refreshUntouchedTextLines(
+  tx: Transaction,
+  draft: ImportDraft,
+  catalog: Product[],
+) {
+  const local = parseTextLocally(draft.original_text, catalog);
+  await markRestaurantHeader(tx, draft.restaurant_id, local);
+  const lines = draft.lines.map((line) => {
+    const legacyBlank =
+      draft.version === 1 &&
+      draft.status === "draft" &&
+      line.sourceLine > 0 &&
+      !line.productText;
+    // Keep every reviewed, manually matched, filled or explicitly ignored row.
+    // Legacy parser fallbacks used the entire source as their product text.
+    if (
+      line.reviewed ||
+      (line.matchedBy === "manual" && !legacyBlank) ||
+      line.disposition !== "item" ||
+      line.productId ||
+      line.quantity ||
+      line.unit ||
+      line.extractionIssues.length ||
+      (line.productText &&
+        normalizeName(line.productText) !== normalizeName(line.sourceText)) ||
+      draft.lines.filter((other) => other.sourceLine === line.sourceLine)
+        .length !== 1
+    )
+      return line;
+    const parsed = local.find(
+      (candidate) =>
+        candidate.sourceLine === line.sourceLine &&
+        candidate.sourceText === line.sourceText,
+    );
+    if (
+      !parsed ||
+      (!parsed.productText &&
+        !parsed.quantity &&
+        !parsed.unit &&
+        parsed.disposition !== "ignored")
+    )
+      return line;
+    const candidate = { ...parsed, id: line.id };
+    return Object.entries(candidate).every(
+      ([key, value]) =>
+        JSON.stringify(value) === JSON.stringify(line[key as keyof ReviewLine]),
+    )
+      ? line
+      : candidate;
+  });
+  return {
+    lines,
+    changed: lines.some((line, index) => line !== draft.lines[index]),
+  };
+}
+
+export async function reparseTextDraft(
+  actor: string,
+  id: string,
+  key: string,
+  input: unknown,
+) {
+  const parsed = z
+    .object({ version: z.number().int().positive() })
+    .strict()
+    .safeParse(input);
+  ensure(parsed.success, "请先重新读取草稿");
+  const db = await getDb();
+  return db.transaction((tx) =>
+    replay(
+      tx,
+      actor,
+      key,
+      sha(JSON.stringify({ action: "reparseText", id, ...parsed.data })),
+      async () => {
+        const draft = await draftRow(tx, actor, id);
+        editable(draft, parsed.data.version);
+        ensure(draft.source_kind === "text", "此操作仅用于粘贴文字");
+        const refreshed = await refreshUntouchedTextLines(
+          tx,
+          draft,
+          await catalogIn(tx),
+        );
+        if (refreshed.changed)
+          await tx.query(
+            "UPDATE import_drafts SET lines=$1,status='review',source_checked=false,preview=NULL,version=version+1,updated_at=now() WHERE id=$2",
+            [JSON.stringify(refreshed.lines), id],
+          );
+        return {
+          id,
+          version: draft.version + (refreshed.changed ? 1 : 0),
+          changed: refreshed.changed,
+        };
+      },
+    ),
+  );
+}
+
 export function restaurantMismatch(
   draft: Pick<
     ImportDraft,
@@ -638,44 +737,10 @@ export async function extractDraft(
     editable(draft, a.data.version);
     const catalog = await catalogIn(tx);
     let rulesChanged = false;
-    if (
-      draft.source_kind === "text" &&
-      a.data.scope === "unresolved" &&
-      draft.version === 1 &&
-      draft.status === "draft"
-    ) {
-      const local = parseTextLocally(draft.original_text, catalog);
-      await markRestaurantHeader(tx, draft.restaurant_id, local);
-      draft.lines = draft.lines.map((line) => {
-        // Only untouched blank source rows from older drafts may be filled.
-        if (
-          line.reviewed ||
-          line.disposition !== "item" ||
-          line.productText ||
-          line.productId ||
-          line.quantity ||
-          line.unit ||
-          line.extractionIssues.length
-        )
-          return line;
-        if (
-          draft.lines.filter((other) => other.sourceLine === line.sourceLine)
-            .length !== 1
-        )
-          return line;
-        const parsed = local.find(
-          (candidate) =>
-            candidate.sourceLine === line.sourceLine &&
-            candidate.sourceText === line.sourceText,
-        );
-        if (
-          !parsed ||
-          (!parsed.productText && !parsed.quantity && !parsed.unit)
-        )
-          return line;
-        rulesChanged = true;
-        return { ...parsed, id: line.id };
-      });
+    if (draft.source_kind === "text" && a.data.scope === "unresolved") {
+      const refreshed = await refreshUntouchedTextLines(tx, draft, catalog);
+      rulesChanged = refreshed.changed;
+      draft.lines = refreshed.lines;
     }
     const targets =
       draft.source_kind === "text" && a.data.scope === "unresolved"
@@ -700,7 +765,7 @@ export async function extractDraft(
     if (targets && !targets.size) {
       if (rulesChanged)
         await tx.query(
-          "UPDATE import_drafts SET lines=$1,preview=NULL,version=version+1,updated_at=now() WHERE id=$2",
+          "UPDATE import_drafts SET lines=$1,preview=NULL,source_checked=false,version=version+1,updated_at=now() WHERE id=$2",
           [JSON.stringify(draft.lines), id],
         );
       return { replayed: true as const };

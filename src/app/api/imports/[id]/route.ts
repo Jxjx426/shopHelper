@@ -10,6 +10,7 @@ import {
   saveDraft,
   supplementDraft,
   setDraftDeleted,
+  reparseTextDraft,
 } from "@/lib/imports.server";
 import { AppError } from "@/lib/service";
 export const runtime = "nodejs";
@@ -37,6 +38,8 @@ async function post(request: NextRequest, context: Context) {
       return json(await setDraftDeleted(user.id, id, key, input));
     if (action === "save")
       return json(await saveDraft(user.id, id, key, input));
+    if (action === "reparseText")
+      return json(await reparseTextDraft(user.id, id, key, input));
     if (action === "extract")
       return json(await extractDraft(user.id, id, key, input));
     if (action === "confirm")

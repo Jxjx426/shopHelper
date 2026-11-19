@@ -882,12 +882,26 @@ export default function ImportFlow({
                     )
                   )
                     return;
-                  await reloadDraft(draft.id, true);
+                  const latest = await reloadDraft(draft.id, true);
+                  if (
+                    latest?.source_kind === "text" &&
+                    latest.status !== "confirmed" &&
+                    latest.status !== "extracting"
+                  ) {
+                    await write(`/api/imports/${latest.id}`, {
+                      action: "reparseText",
+                      version: latest.version,
+                    });
+                    await reloadDraft(latest.id);
+                    setMessage("已重新解析未修改的文字行，未调用 AI。");
+                  }
                 })
               }
             >
               <RefreshCw size={17} />
-              重新读取
+              {draft.source_kind === "text" && !readOnly
+                ? "重新解析"
+                : "重新读取"}
             </button>
           </div>
           {readOnly ? (
