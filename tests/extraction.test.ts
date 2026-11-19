@@ -750,3 +750,56 @@ test("the shop's egg tray and carton names use boxes without changing quantities
   assert.equal(invented[0].unit, "");
   assert(invented[0].extractionIssues.length);
 });
+
+test("handwritten gm and gms requirements normalize with exact weight calculations while blank and unreadable image cells stay distinct", () => {
+  const lines = buildReview(
+    result([
+      {
+        sourceText: "羊角豆 Okra 400gm",
+        productText: "羊角豆 Okra",
+        quantityText: "400gm",
+        quantityStatus: "present",
+      },
+      {
+        sourceText: "小番茄 500gms",
+        productText: "小番茄",
+        quantityText: "500gms",
+        quantityStatus: "present",
+      },
+      {
+        sourceText: "1）白玉菇",
+        productText: "白玉菇",
+        quantityStatus: "blank",
+      },
+      {
+        sourceText: "2）金针菇 [模糊笔迹]",
+        productText: "金针菇",
+        quantityStatus: "unreadable",
+        uncertain: true,
+      },
+    ]),
+    null,
+    shopCatalog,
+  );
+  assert.deepEqual(
+    lines.slice(0, 2).map((line) => [line.productId, line.quantity, line.unit]),
+    [
+      ["ok", "0.4", "kg"],
+      ["ch", "0.5", "kg"],
+    ],
+  );
+  assert(
+    lines
+      .slice(0, 2)
+      .every(
+        (line) =>
+          !line.extractionIssues.length &&
+          !lineProblems(line, shopCatalog).length,
+      ),
+  );
+  assert.equal(lines[2].disposition, "ignored");
+  assert.equal(lines[3].disposition, "item");
+  assert(lines[3].extractionIssues.length);
+  assert(lines.every((line) => !line.reviewed));
+  assert.equal(lines[0].sourceText, "羊角豆 Okra 400gm");
+});

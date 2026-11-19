@@ -1,6 +1,6 @@
 import { before, beforeEach, after, test } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import sharp from "sharp";
 import { getDb } from "../src/lib/db";
@@ -1314,4 +1314,164 @@ test("egg trays and cartons reach confirmed picking rows as the same box unit wi
   assert.equal(order.items[0].price_snapshot, "24.00");
   assert.equal((await getDraft(actor, d.id)).original_text, source);
   assert.equal((await getDraft(actor, d.id)).attempts, 0);
+});
+
+test("image imports bypass the old all-rows prompt cache, reuse the selected-row result, and keep genuinely unreadable cells for review", async () => {
+  const image = await sharp({
+    create: { width: 401, height: 223, channels: 3, background: "white" },
+  })
+    .png()
+    .toBuffer();
+  const file = { mime: "image/png", base64: image.toString("base64") };
+  const created = await createImport(actor, randomUUID(), {
+    restaurantId: await restaurant(),
+    date,
+    kind: "image",
+    original: file,
+    prepared: file,
+  });
+  let d = await getDraft(actor, created.id);
+  const prepared = await imageForDraft(actor, d.id, true);
+  let calls = 0;
+  const provider = {
+    ...mock(
+      {
+        detectedRestaurant: null,
+        unreadableContent: true,
+        lines: [
+          {
+            sourceLine: 1,
+            sourceText: "Timun 400gm",
+            productText: "Timun",
+            quantity: "400",
+            unitText: "gm",
+            quantityText: "400gm",
+            quantityStatus: "present" as const,
+            uncertain: false,
+          },
+          {
+            sourceLine: 2,
+            sourceText: "未订购生菜",
+            productText: "未订购生菜",
+            quantity: null,
+            unitText: null,
+            quantityText: null,
+            quantityStatus: "blank" as const,
+            uncertain: false,
+          },
+          {
+            sourceLine: 3,
+            sourceText: "Carrot [模糊笔迹]",
+            productText: "Carrot",
+            quantity: null,
+            unitText: null,
+            quantityText: null,
+            quantityStatus: "unreadable" as const,
+            uncertain: true,
+          },
+        ],
+      },
+      () => calls++,
+    ),
+    name: "selected-image-fixture",
+  };
+  const sha = (value: string | Uint8Array) =>
+    createHash("sha256").update(value).digest("hex");
+  const oldKey = sha(
+    JSON.stringify([
+      actor,
+      provider.name,
+      process.env.GEMINI_MODEL,
+      "produce-extract-v2-table-rows",
+      2,
+      [prepared.mime, sha(prepared.bytes)],
+    ]),
+  );
+  const oldResult = {
+    detectedRestaurant: null,
+    unreadableContent: true,
+    lines: [
+      {
+        sourceLine: 1,
+        sourceText: "Carrot",
+        productText: "Carrot",
+        quantity: null,
+        unitText: null,
+        quantityStatus: "unreadable",
+        uncertain: true,
+      },
+    ],
+  };
+  const db = await getDb();
+  await db.query(
+    "INSERT INTO extraction_cache(cache_key,actor_id,result) VALUES($1,$2,$3)",
+    [oldKey, actor, JSON.stringify(oldResult)],
+  );
+  const input = {
+    privacyVersion: PRIVACY_VERSION,
+    redacted: true,
+    replaceExisting: true,
+    scope: "all",
+  };
+  await extractDraft(
+    actor,
+    d.id,
+    randomUUID(),
+    { ...input, version: d.version },
+    provider,
+  );
+  d = await getDraft(actor, d.id);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    [d.lines[0].productId, d.lines[0].quantity, d.lines[0].unit],
+    [product, "0.4", "kg"],
+  );
+  assert.equal(d.lines[1].disposition, "ignored");
+  assert.equal(d.lines[2].disposition, "item");
+  assert(d.lines[2].extractionIssues.length);
+  assert(d.lines.every((line) => !line.reviewed));
+  assert.equal(d.attempts, 1);
+  const reused = await extractDraft(
+    actor,
+    d.id,
+    randomUUID(),
+    { ...input, version: d.version },
+    provider,
+  );
+  assert.equal("cached" in reused && reused.cached, true);
+  d = await getDraft(actor, d.id);
+  assert.equal(calls, 1);
+  assert.equal(d.attempts, 1);
+  await assert.rejects(
+    previewImport(actor, d.id, d.version, "new"),
+    /确认|核对|处理/,
+  );
+  await saveDraft(actor, d.id, randomUUID(), {
+    version: d.version,
+    restaurantId: d.restaurant_id,
+    lines: serialize(
+      d.lines.map((line) => ({
+        ...line,
+        reviewed: true,
+        ...(line.id === d.lines[2].id
+          ? {
+              disposition: "ignored" as const,
+              ignoreReason: "已对照原图，本次不订购",
+              saveAlias: false,
+            }
+          : {}),
+      })),
+    ),
+    sourceChecked: true,
+    restaurantAcknowledged: false,
+  });
+  const confirmed = await confirm(await getDraft(actor, d.id));
+  const order = (await workspace(date)).orders.find(
+    (order) => order.id === confirmed.id,
+  )!;
+  assert.equal(order.items.length, 1);
+  assert.equal(order.items[0].product_id, product);
+  assert.equal(order.items[0].ordered_quantity, "0.400");
+  assert.equal(order.items[0].ordered_unit, "kg");
+  assert.equal(calls, 1);
 });

@@ -80,6 +80,8 @@ const equivalents: Record<string, Unit> = {
   公斤: "kg",
   千克: "kg",
   g: "g",
+  gm: "g",
+  gms: "g",
   gram: "g",
   grams: "g",
   克: "g",
